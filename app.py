@@ -10,10 +10,12 @@ import threading
 import asyncio
 from services.fetch_tweets import fetch_tweets_for_all_users
 from services.fetch_tweets import post_tweets_for_all_users
+import os
 
 app = Flask(__name__)
 app.config.from_object(Config)
-CORS(app, origins=["http://localhost:3000"], supports_credentials=True)
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+CORS(app, origins=cors_origins, supports_credentials=True)
 
 # Variables globales para el hilo y el evento
 fetcher_thread = None
