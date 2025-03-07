@@ -1,0 +1,12 @@
+Flask
+requests
+requests-oauthlib
+pg8000
+python-dotenv
+aiohttp
+flask[async]
+openai
+flask-cors
+asyncio
+gunicorn
+fpdf
