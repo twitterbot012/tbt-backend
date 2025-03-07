@@ -156,11 +156,11 @@ def login():
     password = data.get("password")
 
     if not username or not password:
-        return jsonify({"error": "Faltan datos en la solicitud"}), 400
+        return jsonify({"error": "Missing Data"}), 400
 
     rapidapi_key = get_rapidapi_key()
     if not rapidapi_key:
-        return jsonify({"error": "No se pudo obtener la API Key de RapidAPI"}), 500
+        return jsonify({"error": "Can't find RapidAPI Key"}), 500
 
     url = "https://twttrapi.p.rapidapi.com/login-email-username"
     headers = {
@@ -186,8 +186,8 @@ def login():
             return jsonify({"error": response_data.get("message", "Login failed")}), response.status_code
 
     except Exception as e:
-        logging.error(f"❌ Error en la solicitud a RapidAPI: {str(e)}")
-        return jsonify({"error": "Error interno en el servidor"}), 500
+        logging.error(f"❌ RapidAPI Error: {str(e)}")
+        return jsonify({"error": "Server Error"}), 500
 
 
 @auth_bp.route("/login-2fa", methods=["POST"])
@@ -197,11 +197,11 @@ def login_2fa():
     otp = data.get("otp")
 
     if not login_data or not otp:
-        return jsonify({"error": "Faltan datos en la solicitud"}), 400
+        return jsonify({"error": "Missing Data"}), 400
 
     rapidapi_key = get_rapidapi_key()
     if not rapidapi_key:
-        return jsonify({"error": "No se pudo obtener la API Key de RapidAPI"}), 500
+        return jsonify({"error": "Can't find RapidAPI Key"}), 500
 
     url = "https://twttrapi.p.rapidapi.com/login-2fa"
     headers = {
@@ -221,8 +221,8 @@ def login_2fa():
         if response.status_code == 200 and response_data.get("success"):
             return jsonify(response_data), 200
         else:
-            return jsonify({"error": response_data.get("message", "Código inválido")}), response.status_code
+            return jsonify({"error": response_data.get("message", "Invalid Code")}), response.status_code
 
     except Exception as e:
-        logging.error(f"❌ Error en la solicitud a RapidAPI (2FA): {str(e)}")
-        return jsonify({"error": "Error interno en el servidor"}), 500
+        logging.error(f"❌ RapidAPI Error (2FA): {str(e)}")
+        return jsonify({"error": "Server Error"}), 500
