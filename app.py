@@ -10,20 +10,19 @@ import threading
 import asyncio
 from services.fetch_tweets import fetch_tweets_for_all_users
 from services.fetch_tweets import post_tweets_for_all_users
-import os
+from multiprocessing import Manager
+import time
 
 app = Flask(__name__)
 app.config.from_object(Config)
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-CORS(app, origins=cors_origins, supports_credentials=True)
+CORS(app, origins=["http://localhost:3000"], supports_credentials=True)
 
-# Variables globales para el hilo y el evento
+manager = Manager()
+fetching_event = manager.Event()
+posting_event = manager.Event()
 fetcher_thread = None
-fetching_event = threading.Event()
 poster_thread = None
-posting_event = threading.Event()
 
-# Registrar blueprints
 app.register_blueprint(accounts_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(logs_bp, url_prefix="/logs")
@@ -35,18 +34,28 @@ def home():
     return {"message": "Bienvenido a la API de Twitter Bot"}
 
 def start_tweet_fetcher():
+    """
+    Inicia la recolección de tweets en un bucle hasta que se active `fetching_event`
+    """
     print('🚀 Iniciando el servicio de recolección de tweets...')
-
+    
     async def fetch_loop():
         with app.app_context():
             while not fetching_event.is_set():
                 try:
+                    print("🔎 Buscando tweets...")
                     task = asyncio.create_task(fetch_tweets_for_all_users(fetching_event))
-                    await task 
+                    await task
+
                     if fetching_event.is_set():
-                        break 
-                    print("⏳ Esperando 30 segundos antes de la próxima búsqueda...")
-                    await asyncio.sleep(30) 
+                        break
+
+                    print("⏳ Esperando hasta 30 segundos antes de la próxima búsqueda...")
+                    for _ in range(30):  # Esperar en intervalos de 1 segundo para detectar el stop
+                        if fetching_event.is_set():
+                            break
+                        time.sleep(1)
+
                 except asyncio.CancelledError:
                     print("⏹️ Tarea cancelada por solicitud de detención.")
                     break
@@ -56,22 +65,35 @@ def start_tweet_fetcher():
 
         print("⏹️ Servicio de recolección detenido.")
 
-    asyncio.run(fetch_loop())
-    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(fetch_loop())
+    loop.close()
+
     
 def start_tweet_poster():
+    """
+    Inicia la publicación de tweets en un bucle hasta que se active `posting_event`
+    """
     print('🚀 Iniciando el servicio de publicación de tweets...')
-
+    
     async def post_loop():
         with app.app_context():
             while not posting_event.is_set():
                 try:
+                    print("📢 Publicando tweets...")
                     task = asyncio.create_task(post_tweets_for_all_users(posting_event))
                     await task
+
                     if posting_event.is_set():
                         break
-                    print("⏳ Esperando 30 segundos antes de la próxima publicación...")
-                    await asyncio.sleep(30)
+
+                    print("⏳ Esperando hasta 30 segundos antes de la próxima publicación...")
+                    for _ in range(30):  # Esperar en intervalos de 1 segundo para detectar el stop
+                        if posting_event.is_set():
+                            break
+                        time.sleep(1)
+
                 except asyncio.CancelledError:
                     print("⏹️ Tarea cancelada por solicitud de detención.")
                     break
@@ -80,8 +102,11 @@ def start_tweet_poster():
                     break
 
         print("⏹️ Servicio de publicación detenido.")
-        
-    asyncio.run(post_loop())
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(post_loop())
+    loop.close()
 
     
 @app.route("/start-fetch", methods=["POST"])
@@ -101,17 +126,21 @@ def stop_fetch():
     global fetcher_thread
 
     if fetcher_thread is not None and fetcher_thread.is_alive():
+        print("⏹️ Solicitando detener la recolección de tweets...")
         fetching_event.set() 
-        fetcher_thread.join(timeout=5)
+
+        fetcher_thread.join(timeout=10)
+
+        if fetcher_thread.is_alive():
+            print("⚠️ El hilo sigue activo, forzando su cierre...")
+            fetcher_thread = None  
+
         return jsonify({"status": "stopped"}), 200
     else:
-        return jsonify({"status": "not running", "message": "El proceso de recolección no está en ejecución."}), 400
+        return jsonify({"status": "not running"}), 400
 
 @app.route("/status-fetch", methods=["GET"])
 def status_fetch():
-    """
-    Endpoint para verificar el estado del proceso de recolección.
-    """
     global fetcher_thread
 
     if fetcher_thread is not None and fetcher_thread.is_alive():
@@ -138,11 +167,17 @@ def stop_post():
     global poster_thread
 
     if poster_thread is not None and poster_thread.is_alive():
-        posting_event.set()
-        poster_thread.join(timeout=5)
+        print("⏹️ Solicitando detener la publicación de tweets...")
+        posting_event.set() 
+        poster_thread.join(timeout=10)
+
+        if poster_thread.is_alive():
+            print("⚠️ El hilo sigue activo, forzando su cierre...")
+            poster_thread = None
+
         return jsonify({"status": "stopped"}), 200
     else:
-        return jsonify({"status": "not running", "message": "El proceso de publicación no está en ejecución."}), 400
+        return jsonify({"status": "not running"}), 400
 
 
 @app.route("/status-post", methods=["GET"])
