@@ -183,6 +183,7 @@ def login():
         elif response_data.get("hint") == "Please use second endpoint /login_2fa to continue login.":
             return jsonify({"error": "2FA_REQUIRED", "login_data": response_data.get("login_data")}), 401
         else:
+            print(response_data)
             return jsonify({"error": response_data.get("message", "Login failed")}), response.status_code
 
     except Exception as e:
