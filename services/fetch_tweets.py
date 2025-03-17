@@ -20,7 +20,7 @@ async def get_tweet_limit_per_hour(user_id):
 
 async def count_tweets_for_user(user_id):
     query = f"""
-    SELECT COUNT(*) FROM collected_tweets 
+    SELECT COUNT(*) FROM posted_tweets 
     WHERE user_id = {user_id}
     AND created_at >= NOW() - INTERVAL '1 hour'
     """
@@ -56,12 +56,6 @@ async def fetch_tweets_for_user(session, user_id, username, limit, fetching_even
                 # Verificar nuevamente si el proceso debe detenerse
                 if fetching_event.is_set():
                     print(f"⏹️ Proceso detenido mientras se procesaban tweets de {username}.")
-                    break
-
-                # Contar tweets recolectados hoy
-                tweets_collected_today = await count_tweets_for_user(user_id)
-                if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-                    print(f"⛔ Usuario {user_id} alcanzó el límite mientras recolectaba. Deteniendo usuario {username}.")
                     break
 
                 # Extraer datos del tweet
@@ -395,7 +389,7 @@ async def post_tweets_for_single_user(user_id, posting_event):
 
     # Verificar límite de tweets por hora
     tweet_limit = await get_tweet_limit_per_hour(user_id)
-    tweets_posted_last_hour = await count_tweets_for_user(user_id)
+    tweets_posted_last_hour = await count_tweets_for_user(user_id)  # ✅ Se mantiene count_tweets_for_user
 
     if tweets_posted_last_hour >= tweet_limit:
         print(f"⛔ Usuario {user_id} alcanzó el límite de {tweet_limit} tweets por hora. Saltando publicación.")
@@ -409,7 +403,39 @@ async def post_tweets_for_single_user(user_id, posting_event):
         return
 
     async with aiohttp.ClientSession() as session:
-        await post_tweets_for_user(session, user_id, tweets_to_post, posting_event, tweet_limit, tweets_posted_last_hour)
+        for tweet_id, tweet_text in tweets_to_post:
+            if posting_event.is_set():
+                print(f"⏹️ Proceso detenido mientras se publicaban tweets.")
+                break
+
+            # Verificar nuevamente el límite antes de publicar cada tweet
+            tweets_posted_last_hour = await count_tweets_for_user(user_id)  # ✅ Se actualiza en cada iteración
+            if tweets_posted_last_hour >= tweet_limit:
+                print(f"⛔ Usuario {user_id} alcanzó el límite mientras publicaba. Deteniendo la publicación.")
+                break
+
+            # Publicar el tweet
+            response, status_code = post_tweet(user_id, tweet_text)
+
+            if status_code == 200:
+                # Guardar en la base de datos que el tweet fue publicado
+                insert_query = f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ('{user_id}', '{tweet_text}', NOW())"
+                run_query(insert_query)
+
+                print(f"✅ Tweet publicado y guardado en posted_tweets: {tweet_text[:50]}...")
+
+                # Eliminarlo de collected_tweets
+                delete_query = f"DELETE FROM collected_tweets WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
+                run_query(delete_query)
+                print(f"🗑️ Tweet eliminado de collected_tweets después de ser publicado: {tweet_text[:50]}...")
+
+                # Incrementar contador de tweets publicados
+                tweets_posted_last_hour += 1  # ✅ Se incrementa para evitar exceso
+
+            else:
+                print(f"❌ No se pudo publicar el tweet: {response.get('error')}")
+
+            await asyncio.sleep(0.1)
 
     print(f"✅ Publicación de tweets completada para usuario ID: {user_id}.")
 
