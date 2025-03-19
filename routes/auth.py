@@ -167,7 +167,7 @@ def login():
         "x-rapidapi-key": rapidapi_key,
         "x-rapidapi-host": "twttrapi.p.rapidapi.com",
         "Content-Type": "application/x-www-form-urlencoded",
-        'twttr-proxy': "http://sp4tntbmfv:+lRkdu4bE0E2ecn9uH@ar.smartproxy.com:10001"
+        # 'twttr-proxy': "http://sp4tntbmfv:+lRkdu4bE0E2ecn9uH@ar.smartproxy.com:10001"
     }
     payload = {
         "username_or_email": username,
@@ -210,7 +210,7 @@ def login_2fa():
         "x-rapidapi-key": rapidapi_key,
         "x-rapidapi-host": "twttrapi.p.rapidapi.com",
         "Content-Type": "application/x-www-form-urlencoded",
-        'twttr-proxy': "http://sp4tntbmfv:+lRkdu4bE0E2ecn9uH@ar.smartproxy.com:10001"
+        # 'twttr-proxy': "http://sp4tntbmfv:+lRkdu4bE0E2ecn9uH@ar.smartproxy.com:10001"
     }
     payload = {
         "login_data": login_data,
