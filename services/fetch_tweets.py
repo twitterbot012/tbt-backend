@@ -51,7 +51,7 @@ async def fetch_tweets_for_user(session, user_id, username, limit, fetching_even
         async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
             data = await response.json()
             tweets = data.get("tweets", [])[:limit]
-
+            print(data)
             for tweet in tweets:
                 # Verificar nuevamente si el proceso debe detenerse
                 if fetching_event.is_set():
