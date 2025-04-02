@@ -4,6 +4,7 @@ from services.db_service import run_query, save_collected_tweet, log_event
 from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet
+import time
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 10
@@ -135,6 +136,8 @@ async def fetch_tweets_for_keyword(session, user_id, keyword, limit, fetching_ev
 
 
 async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monitored_users, keywords, limit, fetching_event):
+    since_timestamp = int(time.time()) - 24 * 60 * 60
+
     try:
         if fetching_event.is_set():
             print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
@@ -162,7 +165,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                     print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
                     return
 
-                query = f"(from:{username} {keyword})"
+                query = f"(from:{username} {keyword} since_time:{since_timestamp})"
                 params = {"query": query, "type": "Latest"}
 
                 print(f"🔎 Consultando: {query}")
