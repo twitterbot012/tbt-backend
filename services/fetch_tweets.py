@@ -205,7 +205,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
     except asyncio.CancelledError:
         print(f"⏹️ Tarea cancelada para usuario ID: {user_id}.")
-        raise
+        raise 
     except Exception as e:
         log_event(user_id, "ERROR", f"Error obteniendo tweets: {str(e)}")
         print(f"❌ Error al buscar tweets: {e}")
