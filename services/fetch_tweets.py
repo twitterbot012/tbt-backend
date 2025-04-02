@@ -151,9 +151,9 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
         query_parts = []
         for username in monitored_users:
-            keyword_query = " OR ".join(keywords) 
-            query_parts.append(f"(from:{username} ({keyword_query}))")
-        full_query = " OR ".join(query_parts) 
+            for keyword in keywords:
+                query_parts.append(f"(from:{username} {keyword})")
+        full_query = " OR ".join(query_parts)
         
         socialdata_api_key = get_socialdata_api_key()
         if not socialdata_api_key:
