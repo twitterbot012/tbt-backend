@@ -139,7 +139,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
         if fetching_event.is_set():
             print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
             return
-        
+
         TWEET_LIMIT_PER_HOUR = await get_tweet_limit_per_hour(user_id)
 
         tweets_collected_today = await count_tweets_for_user(user_id)
@@ -149,12 +149,6 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
         print(f"🔍 Buscando tweets para usuario ID: {user_id} con palabras clave específicas...")
 
-        query_parts = []
-        for username in monitored_users:
-            for keyword in keywords:
-                query_parts.append(f"(from:{username} {keyword})")
-        full_query = " OR ".join(query_parts)
-        
         socialdata_api_key = get_socialdata_api_key()
         if not socialdata_api_key:
             print("❌ No se pudo obtener la API Key de SocialData.")
@@ -162,30 +156,56 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
         headers = {"Authorization": f"Bearer {socialdata_api_key}"}
 
-        # headers = {"Authorization": f"Bearer {Config.SOCIALDATA_API_KEY}"}
-        params = {"query": full_query, "type": "Latest"}
-
-        async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
-            data = await response.json()
-            tweets = data.get("tweets", [])[:limit]
-
-            for tweet in tweets:
+        for username in monitored_users:
+            for keyword in keywords:
                 if fetching_event.is_set():
-                    print(f"⏹️ Proceso detenido mientras se procesaban tweets.")
-                    break
+                    print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
+                    return
 
-                tweets_collected_today = await count_tweets_for_user(user_id)
-                if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-                    print(f"⛔ Usuario {user_id} alcanzó el límite mientras recolectaba. Deteniendo la búsqueda.")
-                    break
+                query = f"(from:{username} {keyword})"
+                params = {"query": query, "type": "Latest"}
 
-                tweet_id = tweet["id_str"]
-                tweet_text = tweet["full_text"]
-                created_at = tweet["tweet_created_at"]
+                print(f"🔎 Consultando: {query}")
 
-                print(f"✅ Nuevo tweet encontrado: {tweet_text[:50]}...")
-                save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
-                print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
+                async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
+                    if response.status != 200:
+                        print(f"❌ Error al buscar tweets ({response.status}) para: {query}")
+                        continue
+
+                    try:
+                        data = await response.json()
+                    except Exception as e:
+                        print(f"❌ Error parseando respuesta para {query}: {e}")
+                        continue
+
+                    tweets = data.get("tweets", [])[:limit]
+
+                    for tweet in tweets:
+                        if fetching_event.is_set():
+                            print(f"⏹️ Proceso detenido mientras se procesaban tweets.")
+                            return
+
+                        tweets_collected_today = await count_tweets_for_user(user_id)
+                        if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
+                            print(f"⛔ Usuario {user_id} alcanzó el límite durante la búsqueda.")
+                            return
+
+                        tweet_id = tweet["id_str"]
+                        tweet_text = tweet["full_text"]
+                        created_at = tweet["tweet_created_at"]
+
+                        print(f"✅ Nuevo tweet encontrado: {tweet_text[:50]}...")
+                        save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
+                        print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
+
+                        await asyncio.sleep(0.1)
+
+    except asyncio.CancelledError:
+        print(f"⏹️ Tarea cancelada para usuario ID: {user_id}.")
+        raise
+    except Exception as e:
+        log_event(user_id, "ERROR", f"Error obteniendo tweets: {str(e)}")
+        print(f"❌ Error al buscar tweets: {e}")
 
                 # query = f"""
                 # SELECT tweet_text FROM collected_tweets WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'                
@@ -202,14 +222,6 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                 # else:
                 #     print(f"❌ No se pudo publicar el tweet {result}: {response.get('error')}")
 
-                await asyncio.sleep(0.1)
-
-    except asyncio.CancelledError:
-        print(f"⏹️ Tarea cancelada para usuario ID: {user_id}.")
-        raise 
-    except Exception as e:
-        log_event(user_id, "ERROR", f"Error obteniendo tweets: {str(e)}")
-        print(f"❌ Error al buscar tweets: {e}")
         
 # async def fetch_tweets_for_single_user(user_id, fetching_event):
 #     """
