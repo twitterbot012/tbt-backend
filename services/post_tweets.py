@@ -37,16 +37,16 @@ def post_tweet(user_id, tweet_text):
     # 2. Preparar texto del tweet
     if isinstance(tweet_text, list):
         tweet_text = " ".join(tweet_text)
-    tweet_text = str(tweet_text)
+    tweet_text = str(tweet_text).replace("'", "''")  # Escape básico para comillas simples
 
-    # 3. Guardar el tweet en la base de datos (si esto falla, no se sigue)
+    # 3. Guardar el tweet en la base de datos
     try:
-        insert_query = """
+        insert_query = f"""
             INSERT INTO posted_tweets (user_id, tweet_text, created_at)
-            VALUES (%s, %s, NOW())
+            VALUES ({user_id}, '{tweet_text}', NOW())
             RETURNING id
         """
-        result = run_query(insert_query, params=(user_id, tweet_text), fetchone=True)
+        result = run_query(insert_query, fetchone=True)
         if not result:
             raise Exception("No se obtuvo el ID del tweet insertado.")
         internal_id = result[0]
@@ -72,29 +72,30 @@ def post_tweet(user_id, tweet_text):
         if response.status_code == 200 and "data" in response.json():
             tweet_data = response.json()["data"]["create_tweet"]["tweet_result"]["result"]
             tweet_id = tweet_data["rest_id"]
-            tweet_text = tweet_data["legacy"]["full_text"]
+            tweet_text_final = tweet_data["legacy"]["full_text"]
             tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
 
             # 5. Actualizar el tweet_id real en la base
             try:
-                update_query = """
-                    UPDATE posted_tweets SET tweet_id = %s WHERE id = %s
+                update_query = f"""
+                    UPDATE posted_tweets SET tweet_id = '{tweet_id}'
+                    WHERE id = {internal_id}
                 """
-                run_query(update_query, params=(tweet_id, internal_id))
+                run_query(update_query)
             except Exception as update_error:
                 error_message = f"⚠️ Se publicó en Twitter, pero no se pudo guardar el tweet_id: {update_error}"
                 logging.error(error_message)
                 log_event(user_id, "ERROR", error_message)
                 return {"error": "Tweet publicado, pero no se guardó el tweet_id"}, 500
 
-            success_message = f"✅ Tweet publicado y actualizado en la base: {tweet_text[:50]}..."
+            success_message = f"✅ Tweet publicado y actualizado en la base: {tweet_text_final[:50]}..."
             logging.info(success_message)
             log_event(user_id, "POST", success_message)
 
             return {
                 "message": "Tweet publicado exitosamente",
                 "tweet_id": tweet_id,
-                "tweet_text": tweet_text,
+                "tweet_text": tweet_text_final,
                 "tweet_url": tweet_url
             }, 200
 
