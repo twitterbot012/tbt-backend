@@ -15,6 +15,7 @@ def get_rapidapi_key():
 
 
 def post_tweet(user_id, tweet_text):
+    # 1. Obtener la sesión de usuario
     query = f"SELECT session FROM users WHERE id = {user_id}"
     result = run_query(query, fetchone=True)
 
@@ -25,21 +26,38 @@ def post_tweet(user_id, tweet_text):
         return {"error": "Usuario no encontrado"}, 404
 
     session = result[0]
-
     rapidapi_key = get_rapidapi_key()
+
     if not rapidapi_key:
         error_message = "❌ No se pudo obtener la API Key de RapidAPI."
         logging.error(error_message)
         log_event(user_id, "ERROR", error_message)
         return {"error": "No se pudo obtener la API Key de RapidAPI"}, 500
 
-    url = "https://twttrapi.p.rapidapi.com/create-tweet"
-
+    # 2. Preparar texto del tweet
     if isinstance(tweet_text, list):
         tweet_text = " ".join(tweet_text)
-        
     tweet_text = str(tweet_text)
 
+    # 3. Guardar el tweet en la base de datos (si esto falla, no se sigue)
+    try:
+        insert_query = """
+            INSERT INTO posted_tweets (user_id, tweet_text, created_at)
+            VALUES (%s, %s, NOW())
+            RETURNING id
+        """
+        result = run_query(insert_query, params=(user_id, tweet_text), fetchone=True)
+        if not result:
+            raise Exception("No se obtuvo el ID del tweet insertado.")
+        internal_id = result[0]
+    except Exception as db_error:
+        error_message = f"❌ No se pudo guardar el tweet en la base de datos: {db_error}"
+        logging.error(error_message)
+        log_event(user_id, "ERROR", error_message)
+        return {"error": "No se pudo guardar el tweet en la base de datos"}, 500
+
+    # 4. Intentar publicarlo en Twitter
+    url = "https://twttrapi.p.rapidapi.com/create-tweet"
     payload = f"tweet_text={tweet_text}"
     headers = {
         "x-rapidapi-key": rapidapi_key,
@@ -53,25 +71,23 @@ def post_tweet(user_id, tweet_text):
 
         if response.status_code == 200 and "data" in response.json():
             tweet_data = response.json()["data"]["create_tweet"]["tweet_result"]["result"]
-
             tweet_id = tweet_data["rest_id"]
             tweet_text = tweet_data["legacy"]["full_text"]
             tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
 
-            # 💾 Guardar el tweet en la base de datos
+            # 5. Actualizar el tweet_id real en la base
             try:
-                insert_query = f"""
-                    INSERT INTO posted_tweets (user_id, tweet_id, tweet_text, created_at)
-                    VALUES ('{user_id}', '{tweet_id}', %s, NOW())
+                update_query = """
+                    UPDATE posted_tweets SET tweet_id = %s WHERE id = %s
                 """
-                run_query(insert_query, params=(tweet_text,))
-            except Exception as db_error:
-                error_message = f"⚠️ Tweet publicado pero falló al guardar en la DB: {db_error}"
+                run_query(update_query, params=(tweet_id, internal_id))
+            except Exception as update_error:
+                error_message = f"⚠️ Se publicó en Twitter, pero no se pudo guardar el tweet_id: {update_error}"
                 logging.error(error_message)
                 log_event(user_id, "ERROR", error_message)
-                return {"error": "Tweet publicado pero no fue guardado en DB"}, 500
+                return {"error": "Tweet publicado, pero no se guardó el tweet_id"}, 500
 
-            success_message = f"✅ Tweet publicado y guardado: {tweet_text[:50]}..."
+            success_message = f"✅ Tweet publicado y actualizado en la base: {tweet_text[:50]}..."
             logging.info(success_message)
             log_event(user_id, "POST", success_message)
 
