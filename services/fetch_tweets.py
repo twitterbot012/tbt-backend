@@ -28,6 +28,16 @@ async def count_tweets_for_user(user_id):
     result = run_query(query, fetchone=True)
     return result[0] if result else 0
 
+async def count_tweets_for_user2(user_id):
+    query = f"""
+    SELECT COUNT(*) FROM collected_tweets 
+    WHERE user_id = {user_id}
+    AND created_at >= NOW() - INTERVAL '1 hour'
+    """
+    result = run_query(query, fetchone=True)
+    return result[0] if result else 0
+
+
 async def fetch_tweets_for_user(session, user_id, username, limit, fetching_event):
     """
     Función asíncrona para buscar tweets de un usuario monitoreado.
@@ -143,9 +153,8 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
             return
 
-        TWEET_LIMIT_PER_HOUR = await get_tweet_limit_per_hour(user_id)
 
-        tweets_collected_today = await count_tweets_for_user(user_id)
+        tweets_collected_today = await count_tweets_for_user2(user_id)
         if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
             print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets. Saltando completamente la búsqueda.")
             return
