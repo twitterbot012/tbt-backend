@@ -53,7 +53,7 @@ def start_tweet_fetcher():
                         break
 
                     print("⏳ Esperando 1 segundo antes de la próxima búsqueda...")
-                    for _ in range(1):  
+                    for _ in range(60):  
                         if fetching_event.is_set():
                             break
                         time.sleep(1)
@@ -91,7 +91,7 @@ def start_tweet_poster():
                         break
 
                     print("⏳ Esperando 1 segundo antes de la próxima publicación...")
-                    for _ in range(1):  # Esperar en intervalos de 1 segundo para detectar el stop
+                    for _ in range(10):  # Esperar en intervalos de 1 segundo para detectar el stop
                         if posting_event.is_set():
                             break
                         time.sleep(1)
