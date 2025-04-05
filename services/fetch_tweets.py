@@ -7,7 +7,7 @@ from services.post_tweets import post_tweet
 import time
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
-TWEET_LIMIT_PER_HOUR = 10
+TWEET_LIMIT_PER_HOUR = 50
 
 def get_socialdata_api_key():
     query = "SELECT key FROM api_keys WHERE id = 2"  
@@ -41,7 +41,7 @@ async def fetch_tweets_for_user(session, user_id, username, limit, fetching_even
     # Contar tweets recolectados hoy
     tweets_collected_today = await count_tweets_for_user(user_id)
     if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-        print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets hoy. Saltando usuario {username}.")
+        print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets por hora. Saltando usuario {username}.")
         return
 
     print(f"📡 Buscando tweets de usuario monitoreado: {username}")
