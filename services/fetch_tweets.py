@@ -174,7 +174,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                     print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
                     return
 
-                query = f"(from:{username} {keyword} since_time:{since_timestamp})"
+                query = f"(from:{username} {keyword} filter:media since_time:{since_timestamp})"
                 params = {"query": query, "type": "Latest"}
 
                 print(f"🔎 Consultando: {query}")
