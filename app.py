@@ -52,8 +52,8 @@ def start_tweet_fetcher():
                     if fetching_event.is_set():
                         break
 
-                    print("⏳ Esperando 1 segundo antes de la próxima búsqueda...")
-                    for _ in range(60):  
+                    print("⏳ Esperando 30 segundos antes de la próxima búsqueda...")
+                    for _ in range(30):  
                         if fetching_event.is_set():
                             break
                         time.sleep(1)
