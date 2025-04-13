@@ -67,7 +67,7 @@ def translate_text_with_openai(text, target_language, custom_style):
     prompt = f"Translate the following text (not the usernames (@)) into only this language: {target_language}: '{text}'. {custom_style}. Focus solely on the general message without adding irrelevant or distracting details or text. NEVER omit any links from the original text. NEVER add a text that is not a translation of the original text example: 'Sure! Here’s the translation:'"
     try:
         response = client.chat.completions.create(
-            model="google/gemini-2.0-flash-thinking-exp:free", 
+            model="meta-llama/llama-4-scout:free", 
             messages=[
                 {"role": "system", "content": "Eres un traductor experto."},
                 {"role": "user", "content": f"{prompt}"}
