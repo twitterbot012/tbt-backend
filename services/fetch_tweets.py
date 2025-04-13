@@ -146,7 +146,7 @@ async def fetch_tweets_for_keyword(session, user_id, keyword, limit, fetching_ev
 
 
 async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monitored_users, keywords, limit, fetching_event):
-    since_timestamp = int(time.time()) - 4 * 60 * 60
+    since_timestamp = int(time.time()) - 72 * 60 * 60
     collected_count = 0
 
     try:

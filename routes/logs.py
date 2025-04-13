@@ -76,8 +76,8 @@ def update_api_key():
         data = request.json
         updates = []
 
-        if "openai" in data:
-            updates.append((1, data["openai"]))
+        if "openrouter" in data:
+            updates.append((1, data["openrouter"]))
         if "socialdata" in data:
             updates.append((2, data["socialdata"]))
         if "rapidapi" in data:
@@ -104,7 +104,7 @@ def get_api_keys():
         keys = run_query(query, fetchall=True)
 
         keys_dict = {
-            "openai": keys[0][1] if len(keys) > 0 else "",
+            "openrouter": keys[0][1] if len(keys) > 0 else "",
             "socialdata": keys[1][1] if len(keys) > 1 else "",
             "rapidapi": keys[2][1] if len(keys) > 2 else ""
         }

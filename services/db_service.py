@@ -61,12 +61,13 @@ def translate_text_with_openai(text, target_language, custom_style):
         print("❌ No se pudo obtener la API Key de OpenAI.")
         return None
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(base_url="https://openrouter.ai/api/v1",
+                    api_key=api_key)
 
     prompt = f"Translate the following text (not the usernames (@)) into only this language: {target_language}: '{text}'. {custom_style}. Focus solely on the general message without adding irrelevant or distracting details or text. NEVER omit any links from the original text. NEVER add a text that is not a translation of the original text example: 'Sure! Here’s the translation:'"
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini", 
+            model="google/gemini-2.0-flash-thinking-exp:free", 
             messages=[
                 {"role": "system", "content": "Eres un traductor experto."},
                 {"role": "user", "content": f"{prompt}"}
@@ -77,7 +78,7 @@ def translate_text_with_openai(text, target_language, custom_style):
         translated_text = response.choices[0].message.content.strip()
         return translated_text
     except Exception as e:
-        print(f"❌ Error al traducir con OpenAI: {str(e)}")
+        print(f"❌ Error al traducir con OpenRouter: {str(e)}")
         return None
     
     
