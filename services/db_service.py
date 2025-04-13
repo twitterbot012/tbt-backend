@@ -75,6 +75,7 @@ def translate_text_with_openai(text, target_language, custom_style):
             max_tokens=100, 
             temperature=0.5 
         )
+        print(response)
         translated_text = response.choices[0].message.content.strip()
         return translated_text
     except Exception as e:
