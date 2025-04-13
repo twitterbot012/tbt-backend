@@ -2,6 +2,7 @@ import pg8000.native as pg
 from flask import g
 from config import Config
 from openai import OpenAI
+from datetime import datetime, timedelta
 
 
 def get_openai_api_key():
@@ -130,6 +131,40 @@ def translate_text_with_openai(text, target_language, custom_style):
 #         return None
     
     
+def is_duplicate_tweet(tweet_text, recent_texts, api_key):
+    if not recent_texts:
+        return False
+
+    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+
+    prompt = f"""
+    Check if the following tweet is a duplicate or conveys the same message as any of the previously posted tweets, even if phrased differently. Respond with only 'YES' or 'NO'.
+
+    Tweet to check:
+    \"\"\"{tweet_text}\"\"\"
+
+    Recently posted tweets:
+    \"\"\"{" | ".join(recent_texts)}\"\"\"
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="meta-llama/llama-4-scout:free",
+            messages=[
+                {"role": "system", "content": "You are a tweet similarity checker."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=5,
+            temperature=0
+        )
+
+        answer = response.choices[0].message.content.strip().upper()
+        return "YES" in answer
+    except Exception as e:
+        print(f"❌ Error al verificar duplicado con IA: {str(e)}")
+        return False
+
+    
 def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_text, created_at):
     check_query = f"SELECT 1 FROM collected_tweets WHERE tweet_id = '{tweet_id}' LIMIT 1"
     existing_tweet = run_query(check_query, fetchone=True)
@@ -137,18 +172,28 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
         print(f"⚠ Tweet {tweet_id} ya existe. No se guardará.")
         return  
 
+    since_time = datetime.now() - timedelta(hours=24)
+    recent_query = f"""
+        SELECT tweet_text FROM posted_tweets
+        WHERE created_at >= '{since_time.strftime('%Y-%m-%d %H:%M:%S')}'
+        AND user_id = {user_id}
+    """
+    recent_tweets = [r[0] for r in run_query(recent_query, fetchall=True)]
+
+    api_key = get_openai_api_key()
+    if is_duplicate_tweet(tweet_text, recent_tweets, api_key):
+        print(f"⚠ El tweet {tweet_id} parece duplicado. No se guardará.")
+        return
+
     language_query = f"SELECT language, custom_style FROM users WHERE id = {user_id}"
     user_language = run_query(language_query, fetchone=True)
     if not user_language:
         print(f"❌ No se encontró el idioma para el usuario {user_id}.")
         return
 
-    target_language = user_language[0] 
-    if len(user_language[1]) > 0:
-        custom_style = f'Custom Style: {user_language[1]}'
-    else:
-        custom_style = ''
-    
+    target_language = user_language[0]
+    custom_style = f'Custom Style: {user_language[1]}' if user_language[1] else ''
+
     translated_text = translate_text_with_openai(tweet_text, target_language, custom_style)
     if not translated_text:
         print(f"❌ No se pudo traducir el tweet {tweet_id}. No se guardará.")
