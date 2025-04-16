@@ -19,11 +19,6 @@ app.config.from_object(Config)
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 CORS(app, origins=cors_origins, supports_credentials=True)
 
-manager = Manager()
-fetching_event = manager.Event()
-posting_event = manager.Event()
-fetcher_thread = None
-poster_thread = None
 
 app.register_blueprint(accounts_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/auth")
@@ -193,5 +188,10 @@ def status_post():
 
 
 if __name__ == "__main__":
-    # Usamos `app.run()` con threaded=True para manejar múltiples solicitudes
+    manager = Manager()
+    fetching_event = manager.Event()
+    posting_event = manager.Event()
+    fetcher_thread = None
+    poster_thread = None
+
     app.run(debug=True, threaded=True)
