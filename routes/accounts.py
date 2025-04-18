@@ -20,12 +20,12 @@ def get_accounts():
 @accounts_bp.route("/account/<string:twitter_id>", methods=["GET"])
 def get_account_details(twitter_id):
     user_query = f"""
-    SELECT id, username, session, password, language, custom_style
+    SELECT id, username, session, password, language, custom_style, followers, following, status
     FROM users
     WHERE twitter_id = '{twitter_id}'
     """
     user_data = run_query(user_query, fetchone=True)
-    
+    print(user_data)
     if not user_data:
         return jsonify({"error": "Cuenta no encontrada"}), 404
 
@@ -37,7 +37,10 @@ def get_account_details(twitter_id):
         "session": user_data[2],
         "password": user_data[3],
         "language": user_data[4],  
-        "custom_style": user_data[5]  
+        "custom_style": user_data[5],
+        "followers": user_data[6],
+        "following": user_data[7],
+        "status": user_data[8]
     }
 
     monitored_users_query = f"""
@@ -58,11 +61,20 @@ def get_account_details(twitter_id):
     """
     keywords = run_query(keywords_query, fetchall=True)
     keywords_list = [kw[0] for kw in keywords]
+    
+    posts_count_query = f"""
+    SELECT COUNT(*) 
+    FROM logs
+    WHERE user_id = '{id}' AND event_type = 'POST'
+    """
+    posts_count_result = run_query(posts_count_query, fetchone=True)
+    posts_count = posts_count_result[0] if posts_count_result else 0
 
     response = {
         "user": user_info,
         "monitored_users": monitored_users_list,
-        "keywords": keywords_list
+        "keywords": keywords_list,
+        "total_posts": posts_count
     }
     return jsonify(response), 200
 
