@@ -15,7 +15,6 @@ def get_rapidapi_key():
 
 
 def post_tweet(user_id, tweet_text):
-    # 1. Obtener la sesión de usuario
     query = f"SELECT session FROM users WHERE id = {user_id}"
     result = run_query(query, fetchone=True)
 
@@ -34,12 +33,10 @@ def post_tweet(user_id, tweet_text):
         log_event(user_id, "ERROR", error_message)
         return {"error": "No se pudo obtener la API Key de RapidAPI"}, 500
 
-    # 2. Preparar texto del tweet
     if isinstance(tweet_text, list):
         tweet_text = " ".join(tweet_text)
-    tweet_text = str(tweet_text).replace("'", "''")  # Escape básico para comillas simples
+    tweet_text = str(tweet_text).replace("'", "''") 
 
-    # 3. Guardar el tweet en la base de datos
     try:
         insert_query = f"""
             INSERT INTO posted_tweets (user_id, tweet_text, created_at)
@@ -56,7 +53,6 @@ def post_tweet(user_id, tweet_text):
         log_event(user_id, "ERROR", error_message)
         return {"error": "No se pudo guardar el tweet en la base de datos"}, 500
 
-    # 4. Intentar publicarlo en Twitter
     url = "https://twttrapi.p.rapidapi.com/create-tweet"
     payload = f"tweet_text={tweet_text}"
     headers = {
@@ -75,7 +71,6 @@ def post_tweet(user_id, tweet_text):
             tweet_text_final = tweet_data["legacy"]["full_text"]
             tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
 
-            # 5. Actualizar el tweet_id real en la base
             try:
                 update_query = f"""
                     UPDATE posted_tweets SET tweet_id = '{tweet_id}'
