@@ -34,13 +34,15 @@ def refresh_user_profile(twitter_id):
         data = response.json()
         username = data.get("screen_name")
         profile_pic = data.get("profile_image_url_https")
+        followers_count = data.get("followers_count")
+        friends_count = data.get("friends_count")
 
         if not username or not profile_pic:
             return jsonify({"error": "No se pudo obtener el nombre o la imagen"}), 500
 
         update_query = f"""
         UPDATE users
-        SET username = '{username}', profile_pic = '{profile_pic}'
+        SET username = '{username}', profile_pic = '{profile_pic}', followers = '{followers_count}', following = '{friends_count}'
         WHERE twitter_id = '{twitter_id}'
         """
         run_query(update_query)
@@ -48,7 +50,9 @@ def refresh_user_profile(twitter_id):
         return jsonify({
             "message": "Perfil actualizado correctamente",
             "username": username,
-            "profile_pic": profile_pic
+            "profile_pic": profile_pic,
+            "followers": followers_count,
+            "following": friends_count
         }), 200
 
     except Exception as e:

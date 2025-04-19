@@ -4,7 +4,6 @@ import logging
 
 logs_bp = Blueprint("logs", __name__)
 
-
 @logs_bp.route("/logs", methods=["GET"])
 def get_logs():
     logs_query = "SELECT * FROM logs ORDER BY timestamp DESC"
@@ -130,4 +129,3 @@ def get_api_key(key_id):
     except Exception as e:
         logging.error(f"Error al obtener API Key: {e}")
         return jsonify({"error": "Error interno"}), 500
-

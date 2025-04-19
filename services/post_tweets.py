@@ -1,12 +1,8 @@
 import requests
-from requests_oauthlib import OAuth1Session
 from services.db_service import run_query, log_event
-from config import Config
 import logging
-import os
 
 logging.basicConfig(level=logging.INFO)
-
 
 def get_rapidapi_key():
     query = "SELECT key FROM api_keys WHERE id = 3" 

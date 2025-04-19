@@ -102,34 +102,6 @@ def translate_text_with_openai(text, target_language, custom_style):
     print("❌ No se pudo traducir el texto con ninguno de los modelos.")
     return None
 
-
-# def translate_text_with_openai(text, target_language, custom_style):
-#     api_key = get_openai_api_key()
-#     if not api_key:
-#         print("❌ No se pudo obtener la API Key de OpenAI.")
-#         return None
-
-#     client = OpenAI(base_url="https://openrouter.ai/api/v1",
-#                     api_key=api_key)
-
-#     prompt = f"Translate the following text (not the usernames (@)) into only this language: {target_language}: '{text}'. {custom_style}. Focus solely on the general message without adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit any links from the original text. NEVER add a text that is not a translation of the original text example. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here’s the translation:' or 'Here is the translation"
-#     try:
-#         response = client.chat.completions.create(
-#             model="meta-llama/llama-4-scout:free", 
-#             messages=[
-#                 {"role": "system", "content": "Eres un traductor experto."},
-#                 {"role": "user", "content": f"{prompt}"}
-#             ],
-#             max_tokens=100, 
-#             temperature=0.5 
-#         )
-#         print(response)
-#         translated_text = response.choices[0].message.content.strip()
-#         return translated_text
-#     except Exception as e:
-#         print(f"❌ Error al traducir con OpenRouter: {str(e)}")
-#         return None
-    
     
 def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     if not recent_texts:
@@ -213,3 +185,30 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
     run_query(insert_query)
     print(f"✅ Tweet {tweet_id} guardado correctamente.")
 
+
+# def translate_text_with_openai(text, target_language, custom_style):
+#     api_key = get_openai_api_key()
+#     if not api_key:
+#         print("❌ No se pudo obtener la API Key de OpenAI.")
+#         return None
+
+#     client = OpenAI(base_url="https://openrouter.ai/api/v1",
+#                     api_key=api_key)
+
+#     prompt = f"Translate the following text (not the usernames (@)) into only this language: {target_language}: '{text}'. {custom_style}. Focus solely on the general message without adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit any links from the original text. NEVER add a text that is not a translation of the original text example. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here’s the translation:' or 'Here is the translation"
+#     try:
+#         response = client.chat.completions.create(
+#             model="meta-llama/llama-4-scout:free", 
+#             messages=[
+#                 {"role": "system", "content": "Eres un traductor experto."},
+#                 {"role": "user", "content": f"{prompt}"}
+#             ],
+#             max_tokens=100, 
+#             temperature=0.5 
+#         )
+#         print(response)
+#         translated_text = response.choices[0].message.content.strip()
+#         return translated_text
+#     except Exception as e:
+#         print(f"❌ Error al traducir con OpenRouter: {str(e)}")
+#         return None

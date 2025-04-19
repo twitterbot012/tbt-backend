@@ -19,7 +19,6 @@ app.config.from_object(Config)
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 CORS(app, origins=cors_origins, supports_credentials=True)
 
-
 app.register_blueprint(accounts_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(logs_bp, url_prefix="/logs")
@@ -118,6 +117,7 @@ def start_fetch():
     else:
         return jsonify({"status": "already running"}), 400
 
+
 @app.route("/stop-fetch", methods=["POST"])
 def stop_fetch():
     global fetcher_thread
@@ -135,6 +135,7 @@ def stop_fetch():
         return jsonify({"status": "stopped"}), 200
     else:
         return jsonify({"status": "not running"}), 400
+
 
 @app.route("/status-fetch", methods=["GET"])
 def status_fetch():
