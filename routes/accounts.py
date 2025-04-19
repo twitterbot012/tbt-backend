@@ -1,7 +1,59 @@
 from flask import Blueprint, jsonify, request
 from services.db_service import run_query
+import requests
 
 accounts_bp = Blueprint("accounts", __name__)
+
+def get_socialdata_api_key():
+    query = "SELECT key FROM api_keys WHERE id = 2"  
+    result = run_query(query, fetchone=True)
+    return result[0] if result else None 
+
+
+@accounts_bp.route("/account/<string:twitter_id>/refresh-profile", methods=["POST"])
+def refresh_user_profile(twitter_id):
+    API_KEY = get_socialdata_api_key()
+    if not API_KEY:
+        return jsonify({"error": "API Key no configurada"}), 500
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Accept": "application/json"
+        }
+        url = f"https://api.socialdata.tools/twitter/user/{twitter_id}"
+        response = requests.get(url, headers=headers)
+
+        if response.status_code == 402:
+            return jsonify({"error": "Créditos insuficientes para la API"}), 402
+        if response.status_code == 404:
+            return jsonify({"error": "Usuario no encontrado en Twitter"}), 404
+        if not response.ok:
+            return jsonify({"error": "Error al consultar la API externa"}), response.status_code
+
+        data = response.json()
+        username = data.get("screen_name")
+        profile_pic = data.get("profile_image_url_https")
+
+        if not username or not profile_pic:
+            return jsonify({"error": "No se pudo obtener el nombre o la imagen"}), 500
+
+        update_query = f"""
+        UPDATE users
+        SET username = '{username}', profile_pic = '{profile_pic}'
+        WHERE twitter_id = '{twitter_id}'
+        """
+        run_query(update_query)
+
+        return jsonify({
+            "message": "Perfil actualizado correctamente",
+            "username": username,
+            "profile_pic": profile_pic
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @accounts_bp.route("/accounts", methods=["GET"])
 def get_accounts():
@@ -20,7 +72,7 @@ def get_accounts():
 @accounts_bp.route("/account/<string:twitter_id>", methods=["GET"])
 def get_account_details(twitter_id):
     user_query = f"""
-    SELECT id, username, session, password, language, custom_style, followers, following, status, extraction_filter
+    SELECT id, username, session, password, language, custom_style, followers, following, status, extraction_filter, profile_pic
     FROM users
     WHERE twitter_id = '{twitter_id}'
     """
@@ -41,7 +93,8 @@ def get_account_details(twitter_id):
         "followers": user_data[6],
         "following": user_data[7],
         "status": user_data[8],
-        "extraction_filter": user_data[9]
+        "extraction_filter": user_data[9],
+        "profile_pic": user_data[10]
     }
 
     monitored_users_query = f"""
