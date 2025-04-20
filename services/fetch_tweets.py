@@ -173,8 +173,9 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                     if collected_count >= limit:
                         print(f"✅ Límite de {limit} tweets alcanzado.")
                         return
-
-                    query = f"(from:{username} {keyword} filter:media since_time:{since_timestamp})"
+                    
+                    keywords_query = " OR ".join(keywords)
+                    query = f"(from:{username} ({keywords_query}) filter:media since_time:{since_timestamp})"
                     params = {"query": query, "type": "Latest"}
 
                     print(f"🔎 Consultando: {query}")
