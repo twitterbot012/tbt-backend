@@ -171,71 +171,71 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
         while collected_count < limit:
             for username in monitored_users:
-                for keyword in keywords:
-                    if fetching_event.is_set():
-                        print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
-                        return
+                if fetching_event.is_set():
+                    print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
+                    return
 
-                    if collected_count >= limit:
-                        print(f"✅ Límite de {limit} tweets alcanzado.")
-                        return
+                if collected_count >= limit:
+                    print(f"✅ Límite de {limit} tweets alcanzado.")
+                    return
                     
-                    base = f"from:{username} {keyword} since_time:{since_timestamp}"
+                keywords_query = " OR ".join(keywords)
+                base = f"from:{username} ({keywords_query}) since_time:{since_timestamp}"
 
-                    extraction_filter = get_extraction_filter(user_id)
-                    
-                    if extraction_filter == "cb1": 
-                        query = f"({base})"
-                    elif extraction_filter == "cb2":  
-                        query = f"({base} filter:images -filter:videos -filter:links)"
-                    elif extraction_filter == "cb3":  
-                        query = f"({base} filter:videos -filter:images)"
-                    elif extraction_filter == "cb4":  
-                        query = f"({base} filter:images filter:videos)"
-                    elif extraction_filter == "cb5":  
-                        query = f"({base} filter:images -filter:videos)"
-                    elif extraction_filter == "cb6":  
-                        query = f"({base} -filter:images -filter:videos -filter:links)"
-                    else:
-                        query = f"({base})"
+                extraction_filter = get_extraction_filter(user_id)
+                
+                if extraction_filter == "cb1": 
+                    query = f"({base})"
+                elif extraction_filter == "cb2":  
+                    query = f"({base} filter:images -filter:videos -filter:links)"
+                elif extraction_filter == "cb3":  
+                    query = f"({base} filter:videos -filter:images)"
+                elif extraction_filter == "cb4":  
+                    query = f"({base} filter:images filter:videos)"
+                elif extraction_filter == "cb5":  
+                    query = f"({base} filter:images -filter:videos)"
+                elif extraction_filter == "cb6":  
+                    query = f"({base} -filter:images -filter:videos -filter:links)"
+                else:
+                    query = f"({base})"
 
-                    # query = f"(from:{username} {keyword} filter:media since_time:{since_timestamp})"
-                    params = {"query": query, "type": "Latest"}
+                # query = f"(from:{username} {keyword} filter:media since_time:{since_timestamp})"
+                params = {"query": query, "type": "Latest"}
 
-                    print(f"🔎 Consultando: {query}")
+                print(f"🔎 Consultando: {query}")
 
-                    async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
-                        if response.status != 200:
-                            print(f"❌ Error al buscar tweets ({response.status}) para: {query}")
-                            continue
+                async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
+                    if response.status != 200:
+                        print(f"❌ Error al buscar tweets ({response.status}) para: {query}")
+                        continue
 
-                        try:
-                            data = await response.json()
-                        except Exception as e:
-                            print(f"❌ Error parseando respuesta para {query}: {e}")
-                            continue
+                    try:
+                        data = await response.json()
+                    except Exception as e:
+                        print(f"❌ Error parseando respuesta para {query}: {e}")
+                        continue
 
-                        tweets = data.get("tweets", [])
+                    tweets = data.get("tweets", [])
 
-                        for tweet in tweets:
-                            if fetching_event.is_set():
-                                print(f"⏹️ Proceso detenido mientras se procesaban tweets.")
-                                return
+                    for tweet in tweets:
+                        if fetching_event.is_set():
+                            print(f"⏹️ Proceso detenido mientras se procesaban tweets.")
+                            return
 
-                            if collected_count >= limit:
-                                print(f"✅ Límite de {limit} tweets alcanzado.")
-                                return
+                        if collected_count >= limit:
+                            print(f"✅ Límite de {limit} tweets alcanzado.")
+                            return
 
-                            tweet_id = tweet["id_str"]
-                            tweet_text = tweet["full_text"]
-                            created_at = tweet["tweet_created_at"]
+                        tweet_id = tweet["id_str"]
+                        tweet_text = tweet["full_text"]
+                        created_at = tweet["tweet_created_at"]
 
-                            print(f"✅ Nuevo tweet encontrado: {tweet_text[:50]}...")
-                            save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
-                            print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
-                            collected_count += 1
+                        print(f"✅ Nuevo tweet encontrado: {tweet_text[:50]}...")
+                        save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
+                        print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
+                        collected_count += 1
 
-                            await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.1)
 
             if collected_count < limit:
                 print(f"🕐 No se alcanzó el límite ({collected_count}/{limit}). Esperando 3 segundos para reintentar...")
