@@ -61,14 +61,15 @@ def refresh_user_profile(twitter_id):
 
 @accounts_bp.route("/accounts", methods=["GET"])
 def get_accounts():
-    query = "SELECT id, twitter_id, username FROM users"
+    query = "SELECT id, twitter_id, username, profile_pic, followers, following, rate_limit FROM users"
     accounts = run_query(query, fetchall=True)
 
     if not accounts:
         
         return jsonify({"message": "No hay cuentas registradas"}), 200
 
-    accounts_list = [{"id": acc[0], "twitter_id": acc[1], "username": acc[2]} for acc in accounts]
+    accounts_list = [{"id": acc[0], "twitter_id": acc[1], "username": acc[2],
+                      "profile_pic": acc[3], "followers": acc[4], "following": acc[5], "rate_limit": acc[6]} for acc in accounts]
 
     return jsonify(accounts_list), 200
 
