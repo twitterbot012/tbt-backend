@@ -156,7 +156,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
             return
 
-        print(f"🔍 Buscando tweets para usuario ID: {user_id} con palabras clave específicas...")
+        print(f"🔍 Buscando tweets para usuario ID: {user_id} con keywords asignadas por usuario...")
 
         socialdata_api_key = get_socialdata_api_key()
         if not socialdata_api_key:
@@ -174,7 +174,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                 break
 
             sample_users = random.sample(usuarios_disponibles, min(5, len(usuarios_disponibles)))
-            usuarios_consultados.update(sample_users)   # 🔹 Marcar como consultados
+            usuarios_consultados.update(sample_users)
 
             for username in sample_users:
                 if fetching_event.is_set():
@@ -185,8 +185,10 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                     print(f"✅ Límite de {limit} tweets alcanzado.")
                     return
 
-                keywords_query = " OR ".join(keywords)
-                query = f"(from:{username} ({keywords_query}) filter:media since_time:{since_timestamp})"
+                # 🔹 Seleccionar 1 keyword random para este usuario
+                keyword_random = random.choice(keywords)
+
+                query = f"(from:{username} ({keyword_random}) filter:media since_time:{since_timestamp})"
                 params = {"query": query, "type": "Latest"}
 
                 print(f"🔎 Consultando: {query}")
@@ -205,7 +207,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                     tweets = data.get("tweets", [])
 
                     if not tweets:
-                        print(f"⚠️ No se encontraron tweets para {username}.")
+                        print(f"⚠️ No se encontraron tweets para {username} con keyword '{keyword_random}'.")
                         continue
 
                     for tweet in tweets:
