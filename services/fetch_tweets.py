@@ -165,6 +165,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
         headers = {"Authorization": f"Bearer {socialdata_api_key}"}
         MAX_RETRIES = round(len(monitored_users)/5)
+        print(f'MAX RETRIES{MAX_RETRIES}')
 
         while collected_count < limit and MAX_RETRIES > 0:
             usuarios_disponibles = list(set(monitored_users) - usuarios_consultados)
