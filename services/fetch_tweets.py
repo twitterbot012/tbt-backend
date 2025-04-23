@@ -5,7 +5,7 @@ from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet
 import time
-import random
+import itertools
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
@@ -155,14 +155,13 @@ async def fetch_tweets_for_keyword(session, user_id, keyword, limit, fetching_ev
 async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monitored_users, keywords, limit, fetching_event):
     since_timestamp = int(time.time()) - 4 * 60 * 60
     collected_count = 0
-    usuarios_consultados = set() 
-    
+
     try:
         if fetching_event.is_set():
             print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
             return
 
-        print(f"🔍 Buscando tweets para usuario ID: {user_id} con filtros y keywords random por usuario...")
+        print(f"🔍 Buscando tweets para usuario ID: {user_id} con todas las combinaciones de usuarios y keywords...")
 
         socialdata_api_key = get_socialdata_api_key()
         if not socialdata_api_key:
@@ -170,92 +169,75 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             return
 
         headers = {"Authorization": f"Bearer {socialdata_api_key}"}
-        MAX_RETRIES = round(len(monitored_users)/5)
 
-        while collected_count < limit and MAX_RETRIES > 0:
-            usuarios_disponibles = list(set(monitored_users) - usuarios_consultados)
+        # 🔹 Generar todas las combinaciones posibles (usuario, keyword)
+        combinaciones = list(itertools.product(monitored_users, keywords))
 
-            if not usuarios_disponibles:
-                print("✅ Todos los usuarios ya fueron consultados. No hay más combinaciones posibles.")
-                break
+        for username, keyword in combinaciones:
+            if fetching_event.is_set():
+                print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
+                return
 
-            sample_users = random.sample(usuarios_disponibles, min(5, len(usuarios_disponibles)))
-            usuarios_consultados.update(sample_users)
+            if collected_count >= limit:
+                print(f"✅ Límite de {limit} tweets alcanzado.")
+                return
 
-            for username in sample_users:
-                if fetching_event.is_set():
-                    print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
-                    return
+            base = f"from:{username} ({keyword}) since_time:{since_timestamp}"
+            extraction_filter = get_extraction_filter(user_id)
 
-                if collected_count >= limit:
-                    print(f"✅ Límite de {limit} tweets alcanzado.")
-                    return
+            if extraction_filter == "cb1":
+                query = f"({base})"
+            elif extraction_filter == "cb2":
+                query = f"({base} filter:images -filter:videos -filter:links)"
+            elif extraction_filter == "cb3":
+                query = f"({base} filter:videos -filter:images)"
+            elif extraction_filter == "cb4":
+                query = f"({base} filter:images filter:videos)"
+            elif extraction_filter == "cb5":
+                query = f"({base} filter:images -filter:videos)"
+            elif extraction_filter == "cb6":
+                query = f"({base} -filter:images -filter:videos -filter:links)"
+            else:
+                query = f"({base})"
 
-                # 🔹 Seleccionar 1 keyword random para este usuario
-                keyword_random = random.choice(keywords)
+            params = {"query": query, "type": "Latest"}
+            print(f"🔎 Consultando: {query}")
 
-                base = f"from:{username} ({keyword_random}) since_time:{since_timestamp}"
+            async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
+                if response.status != 200:
+                    print(f"❌ Error al buscar tweets ({response.status}) para: {query}")
+                    continue
 
-                extraction_filter = get_extraction_filter(user_id)
+                try:
+                    data = await response.json()
+                except Exception as e:
+                    print(f"❌ Error parseando respuesta para {query}: {e}")
+                    continue
 
-                if extraction_filter == "cb1":
-                    query = f"({base})"
-                elif extraction_filter == "cb2":
-                    query = f"({base} filter:images -filter:videos -filter:links)"
-                elif extraction_filter == "cb3":
-                    query = f"({base} filter:videos -filter:images)"
-                elif extraction_filter == "cb4":
-                    query = f"({base} filter:images filter:videos)"
-                elif extraction_filter == "cb5":
-                    query = f"({base} filter:images -filter:videos)"
-                elif extraction_filter == "cb6":
-                    query = f"({base} -filter:images -filter:videos -filter:links)"
-                else:
-                    query = f"({base})"
+                tweets = data.get("tweets", [])
+                if not tweets:
+                    print(f"⚠️ No se encontraron tweets para {username} con keyword '{keyword}'.")
+                    continue
 
-                params = {"query": query, "type": "Latest"}
-                print(f"🔎 Consultando: {query}")
+                for tweet in tweets:
+                    if fetching_event.is_set():
+                        print(f"⏹️ Proceso detenido mientras se procesaban tweets.")
+                        return
 
-                async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
-                    if response.status != 200:
-                        print(f"❌ Error al buscar tweets ({response.status}) para: {query}")
-                        continue
+                    if collected_count >= limit:
+                        print(f"✅ Límite de {limit} tweets alcanzado.")
+                        return
 
-                    try:
-                        data = await response.json()
-                    except Exception as e:
-                        print(f"❌ Error parseando respuesta para {query}: {e}")
-                        continue
+                    tweet_id = tweet["id_str"]
+                    tweet_text = tweet["full_text"]
+                    created_at = tweet["tweet_created_at"]
 
-                    tweets = data.get("tweets", [])
-                    if not tweets:
-                        print(f"⚠️ No se encontraron tweets para {username} con keyword '{keyword_random}'.")
-                        continue
+                    print(f"✅ Nuevo tweet encontrado: {tweet_text[:50]}...")
+                    save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
+                    print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
+                    collected_count += 1
 
-                    for tweet in tweets:
-                        if fetching_event.is_set():
-                            print(f"⏹️ Proceso detenido mientras se procesaban tweets.")
-                            return
-
-                        if collected_count >= limit:
-                            print(f"✅ Límite de {limit} tweets alcanzado.")
-                            return
-
-                        tweet_id = tweet["id_str"]
-                        tweet_text = tweet["full_text"]
-                        created_at = tweet["tweet_created_at"]
-
-                        print(f"✅ Nuevo tweet encontrado: {tweet_text[:50]}...")
-                        save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
-                        print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
-                        collected_count += 1
-
-                        await asyncio.sleep(0.1)
-
-            if collected_count < limit:
-                MAX_RETRIES -= 1
-                print(f"🕐 No se alcanzó el límite ({collected_count}/{limit}). Reintentos restantes: {MAX_RETRIES}")
-                await asyncio.sleep(5)
+                    await asyncio.sleep(0.1)
 
         print(f"🎯 Finalizado. Total tweets: {collected_count}/{limit}")
 
@@ -266,7 +248,6 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
         log_event(user_id, "ERROR", f"Error obteniendo tweets: {str(e)}")
         print(f"❌ Error al buscar tweets: {e}")
 
-    
 
 async def fetch_tweets_for_single_user(user_id, fetching_event):
     print(f"🔍 Iniciando búsqueda de tweets para usuario ID: {user_id}...")
