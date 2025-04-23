@@ -104,6 +104,54 @@ def start_tweet_poster():
     loop.run_until_complete(post_loop())
     loop.close()
 
+
+def start_tweet_service():
+    """
+    Inicia el servicio continuo de recolección y publicación de tweets
+    """
+    print('🚀 Iniciando el servicio continuo de recolección y publicación de tweets...')
+
+    async def service_loop():
+        with app.app_context():
+            while not fetching_event.is_set():
+                try:
+                    # --- FETCH ---
+                    print("🔎 Iniciando recolección de tweets...")
+                    fetch_task = asyncio.create_task(fetch_tweets_for_all_users(fetching_event))
+                    await fetch_task
+
+                    if fetching_event.is_set():
+                        break
+
+                    print("✅ Recolección completada. Iniciando publicación...")
+
+                    # --- POST ---
+                    post_task = asyncio.create_task(post_tweets_for_all_users(posting_event))
+                    await post_task
+
+                    if fetching_event.is_set():
+                        break
+
+                    print("⏳ Ciclo completo. Esperando 4 horas antes de reiniciar...")
+                    for _ in range(14400):
+                        if fetching_event.is_set():
+                            break
+                        time.sleep(1)
+
+                except asyncio.CancelledError:
+                    print("⏹️ Servicio cancelado por solicitud de detención.")
+                    break
+                except Exception as e:
+                    print(f"❌ Error en service_loop: {e}")
+                    break
+
+        print("⏹️ Servicio continuo detenido.")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(service_loop())
+    loop.close()
+
     
 @app.route("/start-fetch", methods=["POST"])
 def start_fetch():
@@ -111,7 +159,7 @@ def start_fetch():
 
     if fetcher_thread is None or not fetcher_thread.is_alive():
         fetching_event.clear() 
-        fetcher_thread = threading.Thread(target=start_tweet_fetcher, daemon=True)
+        fetcher_thread = threading.Thread(target=start_tweet_service, daemon=True)
         fetcher_thread.start() 
         return jsonify({"status": "started"}), 200
     else:
