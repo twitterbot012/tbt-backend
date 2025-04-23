@@ -5,6 +5,7 @@ from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet
 import time
+import random
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
@@ -165,11 +166,12 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
         headers = {"Authorization": f"Bearer {socialdata_api_key}"}
 
-        MAX_RETRIES = 5   # 🔹 5 intentos como dijiste
+        MAX_RETRIES = 5   # 🔹 5 intentos
 
         while collected_count < limit and MAX_RETRIES > 0:
-            # 🔹 Seleccionar hasta 5 usuarios randoms
+            # 🔹 Seleccionar hasta 5 usuarios y 5 keywords randoms
             sample_users = random.sample(monitored_users, min(5, len(monitored_users)))
+            sample_keywords = random.sample(keywords, min(5, len(keywords)))
 
             for username in sample_users:
                 if fetching_event.is_set():
@@ -180,7 +182,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                     print(f"✅ Límite de {limit} tweets alcanzado.")
                     return
 
-                keywords_query = " OR ".join(keywords)
+                keywords_query = " OR ".join(sample_keywords)
                 query = f"(from:{username} ({keywords_query}) filter:media since_time:{since_timestamp})"
                 params = {"query": query, "type": "Latest"}
 
