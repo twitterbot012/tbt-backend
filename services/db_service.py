@@ -138,7 +138,9 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
 
     prompt = f"""
-    Check if the following tweet is a duplicate or conveys the same message as any of the previously posted tweets, even if phrased differently. Respond with only 'YES' or 'NO'.
+    Check if the following tweet is a duplicate or conveys the same message as any of the previously posted tweets, even if phrased differently. 
+    Additionally, check if it refers to the same topic, event, or subject — for example, multiple tweets about different trailers, announcements, or updates related to the same movie, game, or product. 
+    Respond with only 'YES' or 'NO'.
 
     Tweet to check:
     \"\"\"{tweet_text}\"\"\"
