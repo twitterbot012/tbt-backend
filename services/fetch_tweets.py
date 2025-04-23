@@ -155,13 +155,14 @@ async def fetch_tweets_for_keyword(session, user_id, keyword, limit, fetching_ev
 async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monitored_users, keywords, limit, fetching_event):
     since_timestamp = int(time.time()) - 4 * 60 * 60
     collected_count = 0
-
+    usuarios_consultados = set() 
+    
     try:
         if fetching_event.is_set():
             print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
             return
 
-        print(f"🔍 Buscando tweets para usuario ID: {user_id} con palabras clave específicas...")
+        print(f"🔍 Buscando tweets para usuario ID: {user_id} con filtros y keywords random por usuario...")
 
         socialdata_api_key = get_socialdata_api_key()
         if not socialdata_api_key:
@@ -172,7 +173,14 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
         MAX_RETRIES = 5
 
         while collected_count < limit and MAX_RETRIES > 0:
-            sample_users = random.sample(monitored_users, min(5, len(monitored_users)))
+            usuarios_disponibles = list(set(monitored_users) - usuarios_consultados)
+
+            if not usuarios_disponibles:
+                print("✅ Todos los usuarios ya fueron consultados. No hay más combinaciones posibles.")
+                break
+
+            sample_users = random.sample(usuarios_disponibles, min(5, len(usuarios_disponibles)))
+            usuarios_consultados.update(sample_users)
 
             for username in sample_users:
                 if fetching_event.is_set():
@@ -183,8 +191,10 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                     print(f"✅ Límite de {limit} tweets alcanzado.")
                     return
 
-                keywords_query = " OR ".join(keywords)
-                base = f"from:{username} ({keywords_query}) since_time:{since_timestamp}"
+                # 🔹 Seleccionar 1 keyword random para este usuario
+                keyword_random = random.choice(keywords)
+
+                base = f"from:{username} ({keyword_random}) since_time:{since_timestamp}"
 
                 extraction_filter = get_extraction_filter(user_id)
 
@@ -219,7 +229,7 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
                     tweets = data.get("tweets", [])
                     if not tweets:
-                        print(f"⚠️ No se encontraron tweets para {username}.")
+                        print(f"⚠️ No se encontraron tweets para {username} con keyword '{keyword_random}'.")
                         continue
 
                     for tweet in tweets:
@@ -251,10 +261,11 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
     except asyncio.CancelledError:
         print(f"⏹️ Tarea cancelada para usuario ID: {user_id}.")
-        raise
+        raise 
     except Exception as e:
         log_event(user_id, "ERROR", f"Error obteniendo tweets: {str(e)}")
         print(f"❌ Error al buscar tweets: {e}")
+
     
 
 async def fetch_tweets_for_single_user(user_id, fetching_event):
