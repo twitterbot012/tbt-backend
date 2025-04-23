@@ -5,6 +5,7 @@ from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet
 import time
+import random
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
@@ -168,9 +169,12 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             return
 
         headers = {"Authorization": f"Bearer {socialdata_api_key}"}
+        MAX_RETRIES = 5
 
-        while collected_count < limit:
-            for username in monitored_users:
+        while collected_count < limit and MAX_RETRIES > 0:
+            sample_users = random.sample(monitored_users, min(5, len(monitored_users)))
+
+            for username in sample_users:
                 if fetching_event.is_set():
                     print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
                     return
@@ -178,30 +182,28 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                 if collected_count >= limit:
                     print(f"✅ Límite de {limit} tweets alcanzado.")
                     return
-                    
+
                 keywords_query = " OR ".join(keywords)
                 base = f"from:{username} ({keywords_query}) since_time:{since_timestamp}"
 
                 extraction_filter = get_extraction_filter(user_id)
-                
-                if extraction_filter == "cb1": 
+
+                if extraction_filter == "cb1":
                     query = f"({base})"
-                elif extraction_filter == "cb2":  
+                elif extraction_filter == "cb2":
                     query = f"({base} filter:images -filter:videos -filter:links)"
-                elif extraction_filter == "cb3":  
+                elif extraction_filter == "cb3":
                     query = f"({base} filter:videos -filter:images)"
-                elif extraction_filter == "cb4":  
+                elif extraction_filter == "cb4":
                     query = f"({base} filter:images filter:videos)"
-                elif extraction_filter == "cb5":  
+                elif extraction_filter == "cb5":
                     query = f"({base} filter:images -filter:videos)"
-                elif extraction_filter == "cb6":  
+                elif extraction_filter == "cb6":
                     query = f"({base} -filter:images -filter:videos -filter:links)"
                 else:
                     query = f"({base})"
 
-                # query = f"(from:{username} {keyword} filter:media since_time:{since_timestamp})"
                 params = {"query": query, "type": "Latest"}
-
                 print(f"🔎 Consultando: {query}")
 
                 async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
@@ -216,6 +218,9 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                         continue
 
                     tweets = data.get("tweets", [])
+                    if not tweets:
+                        print(f"⚠️ No se encontraron tweets para {username}.")
+                        continue
 
                     for tweet in tweets:
                         if fetching_event.is_set():
@@ -238,14 +243,15 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
                         await asyncio.sleep(0.1)
 
             if collected_count < limit:
-                print(f"🕐 No se alcanzó el límite ({collected_count}/{limit}). Esperando 3 segundos para reintentar...")
-                await asyncio.sleep(3)
+                MAX_RETRIES -= 1
+                print(f"🕐 No se alcanzó el límite ({collected_count}/{limit}). Reintentos restantes: {MAX_RETRIES}")
+                await asyncio.sleep(5)
 
-        print(f"🎯 Se alcanzó el límite de {limit} tweets.")
+        print(f"🎯 Finalizado. Total tweets: {collected_count}/{limit}")
 
     except asyncio.CancelledError:
         print(f"⏹️ Tarea cancelada para usuario ID: {user_id}.")
-        raise 
+        raise
     except Exception as e:
         log_event(user_id, "ERROR", f"Error obteniendo tweets: {str(e)}")
         print(f"❌ Error al buscar tweets: {e}")
