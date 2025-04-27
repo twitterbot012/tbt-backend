@@ -8,8 +8,7 @@ from routes.tweets import tweets_bp
 from config import Config
 import threading
 import asyncio
-from services.fetch_tweets import fetch_tweets_for_all_users
-from services.fetch_tweets import post_tweets_for_all_users
+from services.fetch_tweets import fetch_tweets_for_all_users, fetch_tweets_for_single_user, post_tweets_for_all_users, post_tweets_for_single_user
 from multiprocessing import Manager
 import time
 import os
@@ -151,11 +150,16 @@ def start_tweet_service():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(service_loop())
     loop.close()
-
+    
     
 @app.route("/start-fetch", methods=["POST"])
 def start_fetch():
     global fetcher_thread
+    for user_id, thread in user_process_threads.items():
+        if thread.is_alive():
+            print(f"⏹️ Deteniendo proceso individual de usuario {user_id} por inicio de proceso global.")
+            user_process_events[user_id].set()
+            thread.join(timeout=5)
 
     if fetcher_thread is None or not fetcher_thread.is_alive():
         fetching_event.clear() 
@@ -201,7 +205,7 @@ def start_post():
 
     if poster_thread is None or not poster_thread.is_alive():
         posting_event.clear()
-        poster_thread = threading.Thread(target=start_tweet_poster, daemon=True)
+        poster_thread = threading.Thread(target=start_tweet_service, daemon=True)
         poster_thread.start()
         return jsonify({"status": "started"}), 200
     else:
@@ -236,11 +240,91 @@ def status_post():
         return jsonify({"status": "stopped"}), 200
 
 
+@app.route("/start-process/<user_id>", methods=["POST"])
+def start_process_user(user_id):
+    if user_id not in user_process_threads or not user_process_threads[user_id].is_alive():
+        event = threading.Event()
+        user_process_events[user_id] = event
+        thread = threading.Thread(target=start_service_for_user, args=(user_id, event), daemon=True)
+        user_process_threads[user_id] = thread
+        thread.start()
+        return jsonify({"status": "started"}), 200
+    else:
+        return jsonify({"status": "already running"}), 400
+
+
+@app.route("/stop-process/<user_id>", methods=["POST"])
+def stop_process_user(user_id):
+    if user_id in user_process_threads and user_process_threads[user_id].is_alive():
+        user_process_events[user_id].set()
+        user_process_threads[user_id].join(timeout=10)
+        return jsonify({"status": "stopped"}), 200
+    else:
+        return jsonify({"status": "not running"}), 400
+
+
+@app.route("/status-process/<user_id>", methods=["GET"])
+def status_process_user(user_id):
+    if user_id in user_process_threads and user_process_threads[user_id].is_alive():
+        return jsonify({"status": "running"}), 200
+    else:
+        return jsonify({"status": "stopped"}), 200
+
+
+def start_service_for_user(user_id, process_event):
+    """
+    Servicio continuo de extracción y publicación para un usuario específico.
+    """
+    print(f'🚀 Iniciando servicio de FETCH + POST para usuario ID: {user_id}...')
+
+    async def service_loop():
+        with app.app_context():
+            while not process_event.is_set():
+                try:
+                    # --- FETCH ---
+                    print(f"🔎 Extrayendo tweets para usuario ID: {user_id}...")
+                    fetch_task = asyncio.create_task(fetch_tweets_for_single_user(user_id, process_event))
+                    await fetch_task
+
+                    if process_event.is_set():
+                        break
+
+                    # --- POST ---
+                    print(f"📢 Publicando tweets para usuario ID: {user_id}...")
+                    post_task = asyncio.create_task(post_tweets_for_single_user(user_id, process_event))
+                    await post_task
+
+                    if process_event.is_set():
+                        break
+
+                    print(f"⏳ Ciclo completo para usuario {user_id}. Esperando 1 hora antes de reiniciar...")
+                    for _ in range(3600):  # Espera de 1 hora (ajustable)
+                        if process_event.is_set():
+                            break
+                        time.sleep(1)
+
+                except asyncio.CancelledError:
+                    print(f"⏹️ Servicio cancelado para usuario ID: {user_id}.")
+                    break
+                except Exception as e:
+                    print(f"❌ Error en service_loop usuario {user_id}: {e}")
+                    break
+
+        print(f"⏹️ Servicio detenido para usuario ID: {user_id}.")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(service_loop())
+    loop.close()
+
+
 if __name__ == "__main__":
     manager = Manager()
     fetching_event = manager.Event()
     posting_event = manager.Event()
     fetcher_thread = None
     poster_thread = None
+    user_process_threads = {}
+    user_process_events = {}
 
     app.run(debug=True, threaded=True)
