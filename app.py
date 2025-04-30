@@ -8,7 +8,7 @@ from routes.tweets import tweets_bp
 from config import Config
 import threading
 import asyncio
-from services.fetch_tweets import fetch_tweets_for_all_users, fetch_tweets_for_single_user, post_tweets_for_all_users, post_tweets_for_single_user
+from services.fetch_tweets import fetch_tweets_for_all_users, fetch_tweets_for_single_user, post_tweets_for_all_users, post_tweets_for_single_user, old_fetch_tweets_for_all_users
 from multiprocessing import Manager
 import time
 import os
@@ -17,6 +17,16 @@ app = Flask(__name__)
 app.config.from_object(Config)
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 CORS(app, origins=cors_origins, supports_credentials=True)
+
+manager = Manager()
+fetching_event = manager.Event()
+old_fetching_event = manager.Event()
+posting_event = manager.Event()
+fetcher_thread = None
+old_fetcher_thread = None
+poster_thread = None
+user_process_threads = {}
+user_process_events = {}
 
 app.register_blueprint(accounts_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/auth")
@@ -36,18 +46,18 @@ def start_tweet_fetcher():
     
     async def fetch_loop():
         with app.app_context():
-            while not fetching_event.is_set():
+            while not old_fetching_event.is_set():
                 try:
                     print("🔎 Buscando tweets...")
-                    task = asyncio.create_task(fetch_tweets_for_all_users(fetching_event))
+                    task = asyncio.create_task(old_fetch_tweets_for_all_users(old_fetching_event))
                     await task
 
-                    if fetching_event.is_set():
+                    if old_fetching_event.is_set():
                         break
 
                     print("⏳ Esperando 30 segundos antes de la próxima búsqueda...")
                     for _ in range(14400):  
-                        if fetching_event.is_set():
+                        if old_fetching_event.is_set():
                             break
                         time.sleep(1)
 
@@ -205,7 +215,7 @@ def start_post():
 
     if poster_thread is None or not poster_thread.is_alive():
         posting_event.clear()
-        poster_thread = threading.Thread(target=start_tweet_service, daemon=True)
+        poster_thread = threading.Thread(target=start_tweet_poster, daemon=True)
         poster_thread.start()
         return jsonify({"status": "started"}), 200
     else:
@@ -318,13 +328,54 @@ def start_service_for_user(user_id, process_event):
     loop.close()
 
 
-if __name__ == "__main__":
-    manager = Manager()
-    fetching_event = manager.Event()
-    posting_event = manager.Event()
-    fetcher_thread = None
-    poster_thread = None
-    user_process_threads = {}
-    user_process_events = {}
+# OLD
 
+@app.route("/old/stop-fetch", methods=["POST"])
+def stop_fetch():
+    global old_fetcher_thread
+
+    if old_fetcher_thread is not None and old_fetcher_thread.is_alive():
+        print("⏹️ Solicitando detener la recolección de tweets...")
+        old_fetching_event.set() 
+
+        old_fetcher_thread.join(timeout=10)
+
+        if old_fetcher_thread.is_alive():
+            print("⚠️ El hilo sigue activo, forzando su cierre...")
+            old_fetcher_thread = None  
+
+        return jsonify({"status": "stopped"}), 200
+    else:
+        return jsonify({"status": "not running"}), 400
+
+
+@app.route("/old/status-fetch", methods=["GET"])
+def status_fetch():
+    global old_fetcher_thread
+
+    if old_fetcher_thread is not None and old_fetcher_thread.is_alive():
+        return jsonify({"status": "running"}), 200
+    else:
+        return jsonify({"status": "stopped"}), 200
+
+
+@app.route("/old/start-fetch", methods=["POST"])
+def start_fetch():
+    global old_fetcher_thread
+    for user_id, thread in user_process_threads.items():
+        if thread.is_alive():
+            print(f"⏹️ Deteniendo proceso individual de usuario {user_id} por inicio de proceso global.")
+            user_process_events[user_id].set()
+            thread.join(timeout=5)
+
+    if old_fetcher_thread is None or not old_fetcher_thread.is_alive():
+        old_fetching_event.clear() 
+        old_fetcher_thread = threading.Thread(target=start_tweet_fetcher, daemon=True)
+        old_fetcher_thread.start() 
+        return jsonify({"status": "started"}), 200
+    else:
+        return jsonify({"status": "already running"}), 400
+
+
+if __name__ == "__main__":
     app.run(debug=True, threaded=True)

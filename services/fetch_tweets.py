@@ -527,3 +527,155 @@ async def start_tweet_fetcher():
 #             print(f"⏹️ Tareas canceladas para usuario ID: {user_id}.")
 
 #     print(f"✅ Búsqueda de tweets completada para usuario ID: {user_id}.")
+
+
+
+# OLD 
+
+
+async def old_fetch_tweets_for_monitored_users_with_keywords(session, user_id, monitored_users, keywords, limit, fetching_event):
+    since_timestamp = int(time.time()) - 4 * 60 * 60
+    collected_count = 0
+
+    try:
+        if fetching_event.is_set():
+            print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
+            return
+
+        print(f"🔍 Buscando tweets para usuario ID: {user_id} con cada keyword por usuario (una sola vez)...")
+
+        socialdata_api_key = get_socialdata_api_key()
+        if not socialdata_api_key:
+            print("❌ No se pudo obtener la API Key de SocialData.")
+            return
+
+        headers = {"Authorization": f"Bearer {socialdata_api_key}"}
+
+        # 🔹 Generar combinaciones usuario-keyword
+        combinaciones = list(itertools.product(monitored_users, keywords))
+
+        print(f"🔢 Total de combinaciones a consultar: {len(combinaciones)}")
+
+        for username, keyword in combinaciones:
+            if fetching_event.is_set():
+                print(f"⏹️ Proceso detenido mientras recorría combinaciones.")
+                return
+
+            if collected_count >= limit:
+                print(f"✅ Límite de {limit} tweets alcanzado.")
+                return
+
+            query = f"(from:{username} ({keyword}) filter:media since_time:{since_timestamp})"
+            params = {"query": query, "type": "Latest"}
+
+            print(f"🔎 Consultando: {query}")
+
+            async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
+                if response.status != 200:
+                    print(f"❌ Error al buscar tweets ({response.status}) para: {query}")
+                    continue
+
+                try:
+                    data = await response.json()
+                except Exception as e:
+                    print(f"❌ Error parseando respuesta para {query}: {e}")
+                    continue
+
+                tweets = data.get("tweets", [])
+
+                if not tweets:
+                    print(f"⚠️ No se encontraron tweets para {username} con keyword '{keyword}'.")
+                    continue
+
+                for tweet in tweets:
+                    if fetching_event.is_set():
+                        print(f"⏹️ Proceso detenido mientras se procesaban tweets.")
+                        return
+
+                    if collected_count >= limit:
+                        print(f"✅ Límite de {limit} tweets alcanzado.")
+                        return
+
+                    tweet_id = tweet["id_str"]
+                    tweet_text = tweet["full_text"]
+                    created_at = tweet["tweet_created_at"]
+
+                    print(f"✅ Nuevo tweet encontrado: {tweet_text[:50]}...")
+                    save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
+                    print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
+                    collected_count += 1
+
+                    await asyncio.sleep(0.1)  # Pausa ligera para no saturar
+
+        print(f"🎯 Finalizado. Total tweets: {collected_count}/{limit}")
+
+    except asyncio.CancelledError:
+        print(f"⏹️ Tarea cancelada para usuario ID: {user_id}.")
+        raise 
+    except Exception as e:
+        log_event(user_id, "ERROR", f"Error obteniendo tweets: {str(e)}")
+        print(f"❌ Error al buscar tweets: {e}")
+
+
+async def old_fetch_tweets_for_single_user(user_id, fetching_event):
+    print(f"🔍 Iniciando búsqueda de tweets para usuario ID: {user_id}...")
+
+    if fetching_event.is_set():
+        print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
+        return
+
+    query_users = f"SELECT DISTINCT twitter_username FROM monitored_users WHERE user_id = '{user_id}'"
+    monitored_users = run_query(query_users, fetchall=True) or []
+
+    query_keywords = f"SELECT DISTINCT keyword FROM user_keywords WHERE user_id = '{user_id}'"
+    monitored_keywords = run_query(query_keywords, fetchall=True) or []
+
+    if not monitored_users or not monitored_keywords:
+        print(f"⚠ Usuario {user_id} no tiene usuarios o palabras clave monitoreadas.")
+        return
+
+    limit_ph = await get_tweet_limit_per_hour(user_id)
+    limit = round(limit_ph * 1.3)
+    
+    async with aiohttp.ClientSession() as session:
+        await old_fetch_tweets_for_monitored_users_with_keywords(
+            session,
+            user_id,
+            [user[0] for user in monitored_users],
+            [keyword[0] for keyword in monitored_keywords],
+            limit,
+            fetching_event
+        )
+
+    print(f"✅ Búsqueda de tweets completada para usuario ID: {user_id}.")
+
+
+async def old_fetch_tweets_for_all_users(fetching_event):
+    print("🔍 Buscando tweets para cada usuario registrado (etapa 1)...")
+
+    query = "SELECT DISTINCT id FROM users"
+    users = run_query(query, fetchall=True)
+    print(users)
+
+    if not users:
+        print("⚠ No hay usuarios registrados en la base de datos.")
+        return
+
+    tasks = []
+    for user_id in users:
+        if fetching_event.is_set():
+            print("⏹️ Proceso detenido por solicitud de usuario.")
+            return
+
+        print(f"👤 Iniciando búsqueda de tweets para usuario ID: {user_id[0]}")
+        task = asyncio.create_task(old_fetch_tweets_for_single_user(user_id[0], fetching_event))
+        tasks.append(task)
+
+        await asyncio.sleep(0.1)
+
+    try:
+        await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+        print("⏹️ Tareas canceladas por solicitud de detención.")
+
+    print("✅ Búsqueda de tweets completada.")
