@@ -208,7 +208,7 @@ def delete_account(twitter_id):
 
 
 @accounts_bp.route("old/accounts", methods=["GET"])
-def get_accounts():
+def old_get_accounts():
     query = "SELECT id, twitter_id, username FROM users"
     accounts = run_query(query, fetchall=True)
 
@@ -222,7 +222,7 @@ def get_accounts():
 
 
 @accounts_bp.route("old/account/<string:twitter_id>", methods=["GET"])
-def get_account_details(twitter_id):
+def old_get_account_details(twitter_id):
     user_query = f"""
     SELECT id, username, session, password, language, custom_style
     FROM users
@@ -272,7 +272,7 @@ def get_account_details(twitter_id):
 
 
 @accounts_bp.route("old/account/<string:twitter_id>", methods=["PUT"])
-def update_account(twitter_id):
+def old_update_account(twitter_id):
     data = request.json
 
     language = data.get("language")

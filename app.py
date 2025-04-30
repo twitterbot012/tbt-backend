@@ -331,7 +331,7 @@ def start_service_for_user(user_id, process_event):
 # OLD
 
 @app.route("/old/stop-fetch", methods=["POST"])
-def stop_fetch():
+def old_stop_fetch():
     global old_fetcher_thread
 
     if old_fetcher_thread is not None and old_fetcher_thread.is_alive():
@@ -350,7 +350,7 @@ def stop_fetch():
 
 
 @app.route("/old/status-fetch", methods=["GET"])
-def status_fetch():
+def old_status_fetch():
     global old_fetcher_thread
 
     if old_fetcher_thread is not None and old_fetcher_thread.is_alive():
@@ -360,7 +360,7 @@ def status_fetch():
 
 
 @app.route("/old/start-fetch", methods=["POST"])
-def start_fetch():
+def old_start_fetch():
     global old_fetcher_thread
     for user_id, thread in user_process_threads.items():
         if thread.is_alive():
