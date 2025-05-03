@@ -307,8 +307,8 @@ def start_service_for_user(user_id, process_event):
                     if process_event.is_set():
                         break
 
-                    print(f"⏳ Ciclo completo para usuario {user_id}. Esperando 1 hora antes de reiniciar...")
-                    for _ in range(3600):  # Espera de 1 hora (ajustable)
+                    print(f"⏳ Ciclo completo para usuario {user_id}. Esperando 4 horas antes de reiniciar...")
+                    for _ in range(14400):  # Espera de 1 hora (ajustable)
                         if process_event.is_set():
                             break
                         time.sleep(1)
