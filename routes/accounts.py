@@ -90,7 +90,7 @@ def get_accounts():
 @accounts_bp.route("/account/<string:twitter_id>", methods=["GET"])
 def get_account_details(twitter_id):
     user_query = f"""
-    SELECT id, username, session, password, language, custom_style, followers, following, status, extraction_filter, profile_pic
+    SELECT id, username, session, password, language, custom_style, followers, following, status, extraction_filter, profile_pic, notes
     FROM users
     WHERE twitter_id = '{twitter_id}'
     """
@@ -112,7 +112,8 @@ def get_account_details(twitter_id):
         "following": user_data[7],
         "status": user_data[8],
         "extraction_filter": user_data[9],
-        "profile_pic": user_data[10]
+        "profile_pic": user_data[10],
+        "notes": user_data[11]
     }
 
     monitored_users_query = f"""
@@ -160,7 +161,8 @@ def update_account(twitter_id):
     monitored_users = data.get("monitored_users", [])
     keywords = data.get("keywords", [])
     extraction_filter = data.get("extraction_filter")
-    
+    notes = data.get("notes", '')
+
     user_query = f"SELECT id FROM users WHERE twitter_id = '{twitter_id}'"
     user_data = run_query(user_query, fetchone=True)
     
@@ -171,7 +173,7 @@ def update_account(twitter_id):
 
     update_user_query = f"""
     UPDATE users
-    SET language = '{language}', custom_style = '{custom_style}', extraction_filter = '{extraction_filter}'
+    SET language = '{language}', custom_style = '{custom_style}', extraction_filter = '{extraction_filter}', notes = '{notes}'
     WHERE twitter_id = '{twitter_id}'
     """
     run_query(update_user_query)

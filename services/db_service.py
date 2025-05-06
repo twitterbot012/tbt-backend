@@ -67,7 +67,7 @@ def translate_text_with_openai(text, target_language, custom_style):
         api_key=api_key
     )
 
-    prompt = f"Translate the following text (not the usernames (@)) into only this language: {target_language}: '{text}'. {custom_style}. Focus solely on the general message without adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit any links from the original text. NEVER add a text that is not a translation of the original text example. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here’s the translation:' or 'Here is the translation"
+    prompt = f"Translate the following text (not the usernames (@)) into only this language: {target_language}: '{text}'. {custom_style}. Focus solely on the general message without adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit any links or hashtags from the original text. NEVER add a text that is not a translation of the original text example. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here’s the translation:' or 'Here is the translation"
 
     models_to_try = [
         "meta-llama/llama-4-scout:free",
@@ -112,6 +112,7 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     prompt = f"""
     Check if the following tweet is a duplicate or conveys the same message as any of the previously posted tweets, even if phrased differently. 
     Additionally, check if it refers to the same topic, event, or subject — for example, multiple tweets about different trailers, announcements, or updates related to the same movie, game, or product. 
+    It is important to check for duplicates, very important. For example, same movies, same games.
     Respond with only 'YES' or 'NO'.
 
     Tweet to check:

@@ -378,4 +378,13 @@ def old_start_fetch():
 
 
 if __name__ == "__main__":
+    # manager = Manager()
+    # fetching_event = manager.Event()
+    # old_fetching_event = manager.Event()
+    # posting_event = manager.Event()
+    # fetcher_thread = None
+    # old_fetcher_thread = None
+    # poster_thread = None
+    # user_process_threads = {}
+    # user_process_events = {}
     app.run(debug=True, threaded=True)
