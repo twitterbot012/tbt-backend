@@ -8,7 +8,7 @@ from routes.tweets import tweets_bp
 from config import Config
 import threading
 import asyncio
-from services.fetch_tweets import fetch_tweets_for_all_users, fetch_tweets_for_single_user, post_tweets_for_all_users, post_tweets_for_single_user, old_fetch_tweets_for_all_users
+from services.fetch_tweets import fetch_tweets_for_all_users, fetch_tweets_for_single_user, fetch_random_tasks_for_all_users, fetch_random_tasks_for_user, post_tweets_for_all_users, post_tweets_for_single_user, old_fetch_tweets_for_all_users
 from multiprocessing import Manager
 import time
 import os
@@ -18,15 +18,15 @@ app.config.from_object(Config)
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 CORS(app, origins=cors_origins, supports_credentials=True)
 
-manager = Manager()
-fetching_event = manager.Event()
-old_fetching_event = manager.Event()
-posting_event = manager.Event()
-fetcher_thread = None
-old_fetcher_thread = None
-poster_thread = None
-user_process_threads = {}
-user_process_events = {}
+# manager = Manager()
+# fetching_event = manager.Event()
+# old_fetching_event = manager.Event()
+# posting_event = manager.Event()
+# fetcher_thread = None
+# old_fetcher_thread = None
+# poster_thread = None
+# user_process_threads = {}
+# user_process_events = {}
 
 app.register_blueprint(accounts_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/auth")
@@ -135,13 +135,24 @@ def start_tweet_service():
                     print("✅ Recolección completada. Iniciando publicación...")
 
                     # --- POST ---
-                    post_task = asyncio.create_task(post_tweets_for_all_users(posting_event))
+                    post_task = asyncio.create_task(post_tweets_for_all_users(fetching_event))
                     await post_task
 
                     if fetching_event.is_set():
                         break
 
+                    print("✅ Recolección completada. Iniciando random actions...")
+
+                    # --- FETCH ---
+                    print("🔎 Iniciando random actions...")
+                    random_task = asyncio.create_task(fetch_random_tasks_for_all_users(fetching_event))
+                    await random_task
+
+                    if fetching_event.is_set():
+                        break
+
                     print("⏳ Ciclo completo. Esperando 4 horas antes de reiniciar...")
+
                     for _ in range(14400):
                         if fetching_event.is_set():
                             break
@@ -307,6 +318,14 @@ def start_service_for_user(user_id, process_event):
                     if process_event.is_set():
                         break
 
+                    # --- RANDOM ---
+                    print(f"📢 Random actions para usuario ID: {user_id}...")
+                    random_task = asyncio.create_task(fetch_random_tasks_for_user(user_id, process_event))
+                    await random_task
+
+                    if process_event.is_set():
+                        break
+
                     print(f"⏳ Ciclo completo para usuario {user_id}. Esperando 4 horas antes de reiniciar...")
                     for _ in range(14400):  # Espera de 1 hora (ajustable)
                         if process_event.is_set():
@@ -378,14 +397,14 @@ def old_start_fetch():
 
 
 if __name__ == "__main__":
-    # manager = Manager()
-    # fetching_event = manager.Event()
-    # old_fetching_event = manager.Event()
-    # posting_event = manager.Event()
-    # fetcher_thread = None
-    # old_fetcher_thread = None
-    # poster_thread = None
-    # user_process_threads = {}
-    # user_process_events = {}
+    manager = Manager()
+    fetching_event = manager.Event()
+    old_fetching_event = manager.Event()
+    posting_event = manager.Event()
+    fetcher_thread = None
+    old_fetcher_thread = None
+    poster_thread = None
+    user_process_threads = {}
+    user_process_events = {}
     
     app.run(debug=True, threaded=True)

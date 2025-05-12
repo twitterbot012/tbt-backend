@@ -1,13 +1,28 @@
 from flask import Blueprint, jsonify, request
 from services.db_service import run_query
 import requests
+from supabase import create_client
+import base64
+from urllib.parse import urlparse
+import uuid
 
 accounts_bp = Blueprint("accounts", __name__)
+
+SUPABASE_URL = "https://tmosrdszzpgfdbexstbu.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtb3NyZHN6enBnZmRiZXhzdGJ1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczOTQ3NTMyOSwiZXhwIjoyMDU1MDUxMzI5fQ.cUiNxjRcnwuelk9XHbRiRgpL88U43OBJbum82vnQlk8" 
+BUCKET_NAME = "images"
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def get_socialdata_api_key():
     query = "SELECT key FROM api_keys WHERE id = 2"  
     result = run_query(query, fetchone=True)
     return result[0] if result else None 
+
+
+def get_rapidapi_key():
+    query = "SELECT key FROM api_keys WHERE id = 3" 
+    result = run_query(query, fetchone=True)
+    return result[0] if result else None
 
 
 @accounts_bp.route("/account/<string:twitter_id>/refresh-profile", methods=["POST"])
@@ -59,6 +74,96 @@ def refresh_user_profile(twitter_id):
         return jsonify({"error": str(e)}), 500
 
 
+@accounts_bp.route("/account/<string:twitter_id>/update-profile", methods=["PUT"])
+def update_user_profile(twitter_id):
+    data = request.json
+    new_username = data.get("username")
+    new_profile_pic_base64 = data.get("profile_pic")
+
+    result = run_query(f"SELECT session FROM users WHERE twitter_id = '{twitter_id}'", fetchone=True)
+    if not result:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+    session = result[0]
+
+    if not new_username and not new_profile_pic_base64:
+        return jsonify({"error": "No se envió ni username ni imagen"}), 400
+
+    rapidapi_key = get_rapidapi_key()
+    if not rapidapi_key:
+        return jsonify({"error": "No se pudo obtener la clave de RapidAPI"}), 500
+
+    headers = {
+        "x-rapidapi-key": rapidapi_key,
+        "x-rapidapi-host": "twttrapi.p.rapidapi.com",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "twttr-session": session
+    }
+
+    responses = {}
+    uploaded_file_url = None  
+
+    try:
+        if new_profile_pic_base64 and new_profile_pic_base64.startswith("data:image/"):
+            image_data = base64.b64decode(new_profile_pic_base64.split(",")[1])
+            ext = new_profile_pic_base64.split(";")[0].split("/")[1]
+            filename = f"{uuid.uuid4()}.{ext}"
+            upload_path = f"{twitter_id}/{filename}"
+
+            upload_response = supabase.storage.from_(BUCKET_NAME).upload(
+                path=upload_path,
+                file=image_data,
+                file_options={"content-type": f"image/{ext}"}
+            )
+
+            if isinstance(upload_response, dict) and upload_response.get("error"):
+                return jsonify({"error": "Error subiendo imagen a Supabase", "details": upload_response["error"]["message"]}), 500
+
+            uploaded_file_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_NAME}/{upload_path}"
+
+            payload = { "image_url": uploaded_file_url }
+            url = "https://twttrapi.p.rapidapi.com/update-profile-image"
+            res = requests.post(url, headers=headers, data=payload)
+            responses["profile_pic"] = res.json()
+
+            if not res.ok:
+                return jsonify({"error": "Error actualizando imagen en Twitter", "details": res.text}), res.status_code
+
+        if new_username:
+            payload = { "screen_name": new_username }
+            url = "https://twttrapi.p.rapidapi.com/update-profile"
+            res = requests.post(url, headers=headers, data=payload)
+            responses["username"] = res.json()
+
+            if not res.ok:
+                return jsonify({"error": "Error actualizando username", "details": res.text}), res.status_code
+
+        updates = []
+        if new_username:
+            updates.append(f"username = '{new_username}'")
+        if uploaded_file_url:
+            updates.append(f"profile_pic = '{uploaded_file_url}'")
+
+        if updates:
+            update_query = f"""
+            UPDATE users SET {', '.join(updates)}
+            WHERE twitter_id = '{twitter_id}'
+            """
+            run_query(update_query)
+
+        if uploaded_file_url:
+            parsed = urlparse(uploaded_file_url)
+            path_to_delete = parsed.path.replace(f"/storage/v1/object/public/{BUCKET_NAME}/", "")
+            supabase.storage.from_(BUCKET_NAME).remove([path_to_delete])
+
+        return jsonify({
+            "message": "Perfil actualizado correctamente",
+            "api_response": responses
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Error inesperado: {str(e)}"}), 500
+
+
 @accounts_bp.route("/accounts", methods=["GET"])
 def get_accounts():
     query = """
@@ -90,7 +195,9 @@ def get_accounts():
 @accounts_bp.route("/account/<string:twitter_id>", methods=["GET"])
 def get_account_details(twitter_id):
     user_query = f"""
-    SELECT id, username, session, password, language, custom_style, followers, following, status, extraction_filter, profile_pic, notes
+    SELECT id, username, session, password, language, custom_style, 
+    followers, following, status, extraction_filter, profile_pic, 
+    notes, likes_limit, retweets_limit, comments_limit, extraction_method
     FROM users
     WHERE twitter_id = '{twitter_id}'
     """
@@ -113,8 +220,45 @@ def get_account_details(twitter_id):
         "status": user_data[8],
         "extraction_filter": user_data[9],
         "profile_pic": user_data[10],
-        "notes": user_data[11]
+        "notes": user_data[11],
+        "likes_limit": user_data[12],
+        "retweets_limit": user_data[13],
+        "comments_limit": user_data[14],
+        "extraction_method": user_data[15]
     }
+    
+    like_users_query = f"""
+    SELECT twitter_username
+    FROM like_users
+    WHERE user_id = '{id}'
+    """
+    like_users = run_query(like_users_query, fetchall=True)
+    like_users_list = [
+        {"twitter_username": mu[0]}
+        for mu in like_users
+    ]
+    
+    comment_users_query = f"""
+    SELECT twitter_username
+    FROM comment_users
+    WHERE user_id = '{id}'
+    """
+    comment_users = run_query(comment_users_query, fetchall=True)
+    comment_users_list = [
+        {"twitter_username": mu[0]}
+        for mu in comment_users
+    ]
+    
+    retweet_users_query = f"""
+    SELECT twitter_username
+    FROM retweet_users
+    WHERE user_id = '{id}'
+    """
+    retweet_users = run_query(retweet_users_query, fetchall=True)
+    retweet_users_list = [
+        {"twitter_username": mu[0]}
+        for mu in retweet_users
+    ]
 
     monitored_users_query = f"""
     SELECT twitter_username
@@ -147,6 +291,9 @@ def get_account_details(twitter_id):
         "user": user_info,
         "monitored_users": monitored_users_list,
         "keywords": keywords_list,
+        "comments": comment_users_list,
+        "likes": like_users_list,
+        "retweets": retweet_users_list,
         "total_posts": posts_count
     }
     return jsonify(response), 200
@@ -162,6 +309,13 @@ def update_account(twitter_id):
     keywords = data.get("keywords", [])
     extraction_filter = data.get("extraction_filter")
     notes = data.get("notes", '')
+    retweets = data.get("retweets", [])
+    comments = data.get("comments", [])
+    likes = data.get("likes", [])
+    retweets_limit = data.get("retweets_limit", [])
+    comments_limit = data.get("comments_limit", [])
+    likes_limit = data.get("likes_limit", [])
+    extraction_method = data.get("extraction_method", 1)
 
     user_query = f"SELECT id FROM users WHERE twitter_id = '{twitter_id}'"
     user_data = run_query(user_query, fetchone=True)
@@ -173,7 +327,9 @@ def update_account(twitter_id):
 
     update_user_query = f"""
     UPDATE users
-    SET language = '{language}', custom_style = '{custom_style}', extraction_filter = '{extraction_filter}', notes = '{notes}'
+    SET language = '{language}', custom_style = '{custom_style}', extraction_filter = '{extraction_filter}',
+    notes = '{notes}', likes_limit = '{likes_limit}', comments_limit = '{comments_limit}',
+    retweets_limit = '{retweets_limit}', extraction_method = '{extraction_method}'
     WHERE twitter_id = '{twitter_id}'
     """
     run_query(update_user_query)
@@ -185,6 +341,19 @@ def update_account(twitter_id):
     run_query(f"DELETE FROM user_keywords WHERE user_id = {user_id}")
     for keyword in keywords:
         run_query(f"INSERT INTO user_keywords (user_id, keyword) VALUES ({user_id}, '{keyword}')")
+        
+    run_query(f"DELETE FROM retweet_users WHERE user_id = {user_id}")
+    for retweet in retweets:
+        run_query(f"INSERT INTO retweet_users (user_id, twitter_username) VALUES ({user_id}, '{retweet}')")
+        
+    run_query(f"DELETE FROM comment_users WHERE user_id = {user_id}")
+    for comment in comments:
+        run_query(f"INSERT INTO comment_users (user_id, twitter_username) VALUES ({user_id}, '{comment}')")
+        
+    run_query(f"DELETE FROM like_users WHERE user_id = {user_id}")
+    for like in likes:
+        run_query(f"INSERT INTO like_users (user_id, twitter_username) VALUES ({user_id}, '{like}')")
+
 
     return jsonify({"message": "Cuenta actualizada correctamente"}), 200
 

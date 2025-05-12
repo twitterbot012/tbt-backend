@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from services.db_service import run_query
 import logging
+from datetime import datetime, timedelta, timezone
 
 logs_bp = Blueprint("logs", __name__)
 
@@ -129,3 +130,24 @@ def get_api_key(key_id):
     except Exception as e:
         logging.error(f"Error al obtener API Key: {e}")
         return jsonify({"error": "Error interno"}), 500
+    
+    
+@logs_bp.route("/cleanup-old-records", methods=["DELETE"])
+def delete_old_records():
+    try:
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        date_limit = seven_days_ago.strftime('%Y-%m-%d %H:%M:%S')
+
+        queries = [
+            f"DELETE FROM random_actions WHERE created_at < '{date_limit}'",
+            f"DELETE FROM posted_tweets WHERE created_at < '{date_limit}'"
+        ]
+
+        for query in queries:
+            run_query(query)
+
+        return jsonify({"message": "Registros antiguos eliminados correctamente"}), 200
+
+    except Exception as e:
+        logging.error(f"Error al eliminar registros antiguos: {e}")
+        return jsonify({"error": "Error interno al eliminar registros"}), 500

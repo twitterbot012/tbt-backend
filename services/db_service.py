@@ -102,6 +102,58 @@ def translate_text_with_openai(text, target_language, custom_style):
     print("❌ No se pudo traducir el texto con ninguno de los modelos.")
     return None
 
+
+def generate_reply_with_openai(tweet_text, target_language):
+    api_key = get_openai_api_key()
+    if not api_key:
+        print("❌ No se pudo obtener la API Key de OpenAI.")
+        return None
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key
+    )
+
+    prompt = (
+        f"""You are a social media assistant. Read the following tweet and reply to it
+        It needs to be obligatory naturally in {target_language}, with a friendly tone. 
+        The reply should be context-aware and concise. Do not repeat the tweet. 
+        Here is the tweet: '{tweet_text}' """
+    )
+
+    models_to_try = [
+        "meta-llama/llama-4-scout:free",
+        "google/gemini-2.0-flash-001",
+        "deepseek/deepseek-chat-v3-0324",
+        "openai/gpt-4o-2024-11-20",
+        "anthropic/claude-3.7-sonnet"
+    ]
+
+    for model in models_to_try:
+        try:
+            print(f"🔄 Intentando generar comentario con modelo: {model}")
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant who replies to tweets in a smart and social way."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=80,
+                temperature=0.7
+            )
+
+            if response.choices and response.choices[0].message.content:
+                comment = response.choices[0].message.content.strip()
+                print(f"✅ Comentario generado con {model}: {comment}")
+                return comment
+            else:
+                print(f"⚠️ El modelo {model} no devolvió contenido.")
+        except Exception as e:
+            print(f"❌ Error con el modelo {model}: {str(e)}")
+
+    print("❌ No se pudo generar un comentario con ninguno de los modelos.")
+    return None
+
     
 def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     if not recent_texts:

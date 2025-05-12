@@ -10,3 +10,4 @@ flask-cors
 asyncio
 gunicorn
 fpdf
+supabase
