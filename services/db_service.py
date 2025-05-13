@@ -204,6 +204,12 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
         SELECT tweet_text FROM posted_tweets
         WHERE created_at >= '{since_time.strftime('%Y-%m-%d %H:%M:%S')}'
         AND user_id = {user_id}
+        
+        UNION
+
+        SELECT tweet_text FROM collected_tweets
+        WHERE created_at >= '{since_time.strftime('%Y-%m-%d %H:%M:%S')}'
+        AND user_id = {user_id}
     """
     recent_tweets = [r[0] for r in run_query(recent_query, fetchall=True)]
 
