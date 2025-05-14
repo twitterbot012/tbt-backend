@@ -120,7 +120,10 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     if not recent_texts:
         return False
 
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key
+    )
 
     prompt = f"""
     Check if the following tweet is a duplicate or conveys the same message as any of the previously posted tweets, even if phrased differently. 
@@ -135,22 +138,38 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     \"\"\"{" | ".join(recent_texts)}\"\"\"
     """
 
-    try:
-        response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout:free",
-            messages=[
-                {"role": "system", "content": "You are a tweet similarity checker."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=5,
-            temperature=0
-        )
+    models_to_try = [
+        "meta-llama/llama-4-scout:free",
+        "google/gemini-2.0-flash-001",
+        "deepseek/deepseek-chat-v3-0324",
+        "openai/gpt-4o-2024-11-20",
+        "anthropic/claude-3.7-sonnet"
+    ]
 
-        answer = response.choices[0].message.content.strip().upper()
-        return "YES" in answer
-    except Exception as e:
-        print(f"❌ Error al verificar duplicado con IA: {str(e)}")
-        return False
+    for model in models_to_try:
+        try:
+            print(f"🔄 Verificando duplicado con modelo: {model}")
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a tweet similarity checker."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=5,
+                temperature=0
+            )
+
+            if response.choices and response.choices[0].message and response.choices[0].message.content:
+                answer = response.choices[0].message.content.strip().upper()
+                print(f"✅ Respuesta del modelo {model}: {answer}")
+                return "YES" in answer
+            else:
+                print(f"⚠️ El modelo {model} no devolvió una respuesta válida.")
+        except Exception as e:
+            print(f"❌ Error con el modelo {model}: {str(e)}")
+
+    print("❌ No se pudo verificar el duplicado con ninguno de los modelos.")
+    return False
 
 
 def verify_tweet_priority(tweet_id, user_id):
