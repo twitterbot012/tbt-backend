@@ -236,17 +236,25 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
     priority = verify_tweet_priority(tweet_id, user_id)
  
     insert_query = f"""
-    INSERT INTO collected_tweets (user_id, source_type, source_value, tweet_id, tweet_text, created_at, priority)
+    INSERT INTO collected_tweets (user_id, source_type, source_value, tweet_id, tweet_text, created_at)
     VALUES ({user_id if user_id is not None else 'NULL'}, 
             '{source_type}', 
             '{source_value}', 
             '{tweet_id}', 
             '{translated_text.replace("'", "''")}', 
-            '{created_at}'),
-            {priority}
-    """
+            '{created_at}')
+            """
     run_query(insert_query)
     print(f"✅ Tweet {tweet_id} guardado correctamente.")
+
+    update_query = f"""
+    UPDATE collected_tweets
+    SET priority = {priority}
+    WHERE tweet_id = '{tweet_id}'
+    """
+    run_query(update_query)
+
+    print(f"✅ Tweet {tweet_id} priorizado correctamente.")
 
 
 # def translate_text_with_openai(text, target_language, custom_style):
