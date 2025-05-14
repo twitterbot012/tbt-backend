@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
-from services.db_service import run_query, save_collected_tweet, log_event, generate_reply_with_openai
+from services.db_service import run_query, log_event
+from services.ai_service import save_collected_tweet, generate_reply_with_openai
 from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet

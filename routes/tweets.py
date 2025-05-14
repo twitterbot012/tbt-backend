@@ -39,7 +39,7 @@ def post_tweet_route():
 @tweets_bp.route("/get-all-tweets/<twitter_id>", methods=["GET"])
 def get_all_tweets(twitter_id):
     query = f"""
-        SELECT user_id, source_value, tweet_id, tweet_text, created_at 
+        SELECT user_id, source_value, tweet_id, tweet_text, created_at, priority
         FROM collected_tweets 
         WHERE user_id = '{twitter_id}' 
         ORDER BY created_at DESC
@@ -50,7 +50,7 @@ def get_all_tweets(twitter_id):
         return jsonify({"message": "No hay tweets recolectados para este usuario"}), 404
     
     return jsonify([
-        {"user_id": t[0], "source_value": [1], "tweet_id": t[2], "tweet_text": t[3], "created_at": t[4]} 
+        {"user_id": t[0], "source_value": [1], "tweet_id": t[2], "tweet_text": t[3], "created_at": t[4], "priority": t[5]} 
         for t in tweets
     ]), 200
 
