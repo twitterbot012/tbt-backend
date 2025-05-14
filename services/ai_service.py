@@ -243,7 +243,7 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
             '{tweet_id}', 
             '{translated_text.replace("'", "''")}', 
             '{created_at}'),
-            '{priority}'
+            {priority}
     """
     run_query(insert_query)
     print(f"✅ Tweet {tweet_id} guardado correctamente.")
