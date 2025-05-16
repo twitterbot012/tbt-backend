@@ -48,16 +48,18 @@ def refresh_user_profile(twitter_id):
 
         data = response.json()
         username = data.get("screen_name")
+        name = data.get("name", '(Refresh Profile)')
         profile_pic = data.get("profile_image_url_https")
         followers_count = data.get("followers_count")
         friends_count = data.get("friends_count")
 
+        
         if not username or not profile_pic:
             return jsonify({"error": "No se pudo obtener el nombre o la imagen"}), 500
 
         update_query = f"""
         UPDATE users
-        SET username = '{username}', profile_pic = '{profile_pic}', followers = '{followers_count}', following = '{friends_count}'
+        SET username = '{username}', profile_pic = '{profile_pic}', followers = '{followers_count}', following = '{friends_count}', name = '{name}'
         WHERE twitter_id = '{twitter_id}'
         """
         run_query(update_query)
@@ -67,7 +69,8 @@ def refresh_user_profile(twitter_id):
             "username": username,
             "profile_pic": profile_pic,
             "followers": followers_count,
-            "following": friends_count
+            "following": friends_count,
+            "name": name
         }), 200
 
     except Exception as e:
@@ -78,6 +81,7 @@ def refresh_user_profile(twitter_id):
 def update_user_profile(twitter_id):
     data = request.json
     new_username = data.get("username")
+    new_name = data.get("name")
     new_profile_pic_base64 = data.get("profile_pic")
 
     result = run_query(f"SELECT session FROM users WHERE twitter_id = '{twitter_id}'", fetchone=True)
@@ -85,7 +89,7 @@ def update_user_profile(twitter_id):
         return jsonify({"error": "Usuario no encontrado"}), 404
     session = result[0]
 
-    if not new_username and not new_profile_pic_base64:
+    if not new_username and not new_profile_pic_base64 and not new_name:
         return jsonify({"error": "No se envió ni username ni imagen"}), 400
 
     rapidapi_key = get_rapidapi_key()
@@ -129,19 +133,20 @@ def update_user_profile(twitter_id):
                 return jsonify({"error": "Error actualizando imagen en Twitter", "details": res.text}), res.status_code
 
         if new_username:
-            payload = { "screen_name": new_username }
+            payload = { "screen_name": new_username, "name": new_name}
             url = "https://twttrapi.p.rapidapi.com/update-profile"
             res = requests.post(url, headers=headers, data=payload)
-            responses["username"] = res.json()
-
+            
             if not res.ok:
-                return jsonify({"error": "Error actualizando username", "details": res.text}), res.status_code
+                return jsonify({"error": "Error actualizando", "details": res.text}), res.status_code
 
         updates = []
         if new_username:
             updates.append(f"username = '{new_username}'")
         if uploaded_file_url:
             updates.append(f"profile_pic = '{uploaded_file_url}'")
+        if new_name:
+            updates.append(f"name = '{new_name}'")
 
         if updates:
             update_query = f"""
@@ -197,7 +202,7 @@ def get_account_details(twitter_id):
     user_query = f"""
     SELECT id, username, session, password, language, custom_style, 
     followers, following, status, extraction_filter, profile_pic, 
-    notes, likes_limit, retweets_limit, comments_limit, extraction_method
+    notes, likes_limit, retweets_limit, comments_limit, extraction_method, name
     FROM users
     WHERE twitter_id = '{twitter_id}'
     """
@@ -224,7 +229,8 @@ def get_account_details(twitter_id):
         "likes_limit": user_data[12],
         "retweets_limit": user_data[13],
         "comments_limit": user_data[14],
-        "extraction_method": user_data[15]
+        "extraction_method": user_data[15],
+        "name": user_data[16]
     }
     
     like_users_query = f"""

@@ -31,12 +31,12 @@ def translate_text_with_openai(text, target_language, custom_style):
     prompt = f"""Translate the following text (not the usernames (@)) into only this language: 
     {target_language}: '{text}'. {custom_style}. Focus solely on the general message without 
     adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit 
-    any links or hashtags from the original text. NEVER add a text that is not a translation 
-    of the original text example. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here's the
+    any links or hashtags from the original text. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here's the
     translation:' or 'Here is the translation. Do not remove, edit, or omit any links or hashtags.
     If you touch even one link or hashtag, your reply will be discarded.
     Simple: links and hashtags stay exactly as they are.
-    Also remember, always translate to: {target_language}"""
+    Also remember, always translate to: {target_language} and NEVER add a text that is not a translation 
+    of the original text example."""
 
     models_to_try = [
         "meta-llama/llama-4-scout:free",
