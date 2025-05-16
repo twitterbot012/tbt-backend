@@ -18,15 +18,15 @@ app.config.from_object(Config)
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 CORS(app, origins=cors_origins, supports_credentials=True)
 
-manager = Manager()
-fetching_event = manager.Event()
-old_fetching_event = manager.Event()
-posting_event = manager.Event()
-fetcher_thread = None
-old_fetcher_thread = None
-poster_thread = None
-user_process_threads = {}
-user_process_events = {}
+# manager = Manager()
+# fetching_event = manager.Event()
+# old_fetching_event = manager.Event()
+# posting_event = manager.Event()
+# fetcher_thread = None
+# old_fetcher_thread = None
+# poster_thread = None
+# user_process_threads = {}
+# user_process_events = {}
 
 app.register_blueprint(accounts_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/auth")
@@ -397,14 +397,14 @@ def old_start_fetch():
 
 
 if __name__ == "__main__":
-    # manager = Manager()
-    # fetching_event = manager.Event()
-    # old_fetching_event = manager.Event()
-    # posting_event = manager.Event()
-    # fetcher_thread = None
-    # old_fetcher_thread = None
-    # poster_thread = None
-    # user_process_threads = {}
-    # user_process_events = {}
+    manager = Manager()
+    fetching_event = manager.Event()
+    old_fetching_event = manager.Event()
+    posting_event = manager.Event()
+    fetcher_thread = None
+    old_fetcher_thread = None
+    poster_thread = None
+    user_process_threads = {}
+    user_process_events = {}
     
     app.run(debug=True, threaded=True)

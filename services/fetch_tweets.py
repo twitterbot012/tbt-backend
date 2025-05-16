@@ -346,7 +346,7 @@ async def fetch_tweets_for_single_user(user_id, fetching_event):
     query_keywords = f"SELECT DISTINCT keyword FROM user_keywords WHERE user_id = '{user_id}'"
     monitored_keywords = run_query(query_keywords, fetchall=True) or []
 
-    if not monitored_users or not monitored_keywords:
+    if not monitored_users:
         print(f"⚠ Usuario {user_id} no tiene usuarios o palabras clave monitoreadas.")
         return
 
