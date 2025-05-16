@@ -131,3 +131,27 @@ def generate_pdf():
     pdf.output(pdf_path)
 
     return send_file(pdf_path, as_attachment=True, download_name=pdf_filename)
+
+
+@tweets_bp.route("/update-priority/<tweet_id>", methods=["PUT"])
+def update_tweet_priority(tweet_id):
+    data = request.json
+    new_priority = data.get("priority")
+
+    if new_priority is None:
+        return jsonify({"error": "Falta el parámetro 'priority'"}), 400
+
+    try:
+        new_priority = int(new_priority)
+        if new_priority not in [1, 2, 3]:
+            return jsonify({"error": "La prioridad debe ser 1, 2 o 3"}), 400
+    except ValueError:
+        return jsonify({"error": "La prioridad debe ser un número entero"}), 400
+
+    query = f"""
+        UPDATE collected_tweets
+        SET priority = {new_priority}
+        WHERE tweet_id = '{tweet_id}'
+    """
+    run_query(query)
+    return jsonify({"message": f"Prioridad actualizada a {new_priority}"}), 200

@@ -28,7 +28,14 @@ def translate_text_with_openai(text, target_language, custom_style):
         api_key=api_key
     )
 
-    prompt = f"Translate the following text (not the usernames (@)) into only this language: {target_language}: '{text}'. {custom_style}. Focus solely on the general message without adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit any links or hashtags from the original text. NEVER add a text that is not a translation of the original text example. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here’s the translation:' or 'Here is the translation"
+    prompt = f"""Translate the following text (not the usernames (@)) into only this language: 
+    {target_language}: '{text}'. {custom_style}. Focus solely on the general message without 
+    adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit 
+    any links or hashtags from the original text. NEVER add a text that is not a translation 
+    of the original text example. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here’s the
+    translation:' or 'Here is the translation. Do not remove, edit, or omit any links or hashtags.
+    If you touch even one link or hashtag, your reply will be discarded.
+    Simple: links and hashtags stay exactly as they are."""
 
     models_to_try = [
         "meta-llama/llama-4-scout:free",
@@ -215,7 +222,7 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
         print(f"⚠ Tweet {tweet_id} ya existe. No se guardará.")
         return  
 
-    since_time = datetime.now() - timedelta(hours=24)
+    since_time = datetime.now() - timedelta(hours=48)
     recent_query = f"""
         SELECT tweet_text FROM posted_tweets
         WHERE created_at >= '{since_time.strftime('%Y-%m-%d %H:%M:%S')}'

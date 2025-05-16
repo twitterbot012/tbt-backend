@@ -623,7 +623,11 @@ async def post_tweets_for_single_user(user_id, posting_event):
         print(f"⛔ Usuario {user_id} alcanzó el límite de {tweet_limit} tweets por hora. Saltando publicación.")
         return
 
-    query_tweets = f"SELECT tweet_id, tweet_text FROM collected_tweets WHERE user_id = '{user_id}'"
+    query_tweets = f"""
+        SELECT tweet_id, tweet_text
+        FROM collected_tweets
+        WHERE user_id = '{user_id}' AND priority = 1
+    """
     tweets_to_post = run_query(query_tweets, fetchall=True) or []
 
     if not tweets_to_post:
