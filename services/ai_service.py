@@ -133,10 +133,16 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     )
 
     prompt = f"""
-    Check if the following tweet is a duplicate or conveys the same message as any of the previously posted tweets, even if phrased differently. 
-    Additionally, check if it refers to the same topic, event, or subject — for example, multiple tweets about different trailers, announcements, or updates related to the same movie, game, or product. 
-    It is important to check for duplicates, very important. For example, same movies, same games.
-    Respond with only 'YES' or 'NO'.
+    You must check if the following tweet is a duplicate of any previously posted tweet.
+
+    Duplicate means:
+    - Same topic, product, movie, game, or event.
+    - Same announcement, update, or news, even if the wording is different.
+    - Tweets about the same trailer, teaser, release date, leak, rumor, or feature are considered duplicates.
+
+    Be strict. It's better to flag similar tweets than to miss duplicates.
+    Respond only with 'YES' if it is a duplicate, or 'NO' if it is completely different.
+    ⚠️ If you fail to detect a duplicate, your response will be discarded by the system.
 
     Tweet to check:
     \"\"\"{tweet_text}\"\"\"
