@@ -86,15 +86,15 @@ def update_user_profile(twitter_id):
 
     result = run_query(f"SELECT session FROM users WHERE twitter_id = '{twitter_id}'", fetchone=True)
     if not result:
-        return jsonify({"error": "Usuario no encontrado"}), 404
+        return jsonify({"error": "User not found"}), 404
     session = result[0]
 
     if not new_username and not new_profile_pic_base64 and not new_name:
-        return jsonify({"error": "No se envió ni username ni imagen"}), 400
+        return jsonify({"error": "Username, Image or Name missing."}), 400
 
     rapidapi_key = get_rapidapi_key()
     if not rapidapi_key:
-        return jsonify({"error": "No se pudo obtener la clave de RapidAPI"}), 500
+        return jsonify({"error": "RapidAPI Key Missing"}), 500
 
     headers = {
         "x-rapidapi-key": rapidapi_key,
@@ -104,7 +104,8 @@ def update_user_profile(twitter_id):
     }
 
     responses = {}
-    uploaded_file_url = None  
+    uploaded_file_url = None
+    username_updated = False
 
     try:
         if new_profile_pic_base64 and new_profile_pic_base64.startswith("data:image/"):
@@ -120,33 +121,55 @@ def update_user_profile(twitter_id):
             )
 
             if isinstance(upload_response, dict) and upload_response.get("error"):
-                return jsonify({"error": "Error subiendo imagen a Supabase", "details": upload_response["error"]["message"]}), 500
+                return jsonify({
+                    "error": "Error uploading image to Supabase",
+                    "details": upload_response["error"]["message"]
+                }), 500
 
             uploaded_file_url = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET_NAME}/{upload_path}"
 
-            payload = { "image_url": uploaded_file_url }
+            payload = {"image_url": uploaded_file_url}
             url = "https://twttrapi.p.rapidapi.com/update-profile-image"
             res = requests.post(url, headers=headers, data=payload)
             responses["profile_pic"] = res.json()
 
             if not res.ok:
-                return jsonify({"error": "Error actualizando imagen en Twitter", "details": res.text}), res.status_code
+                return jsonify({
+                    "error": "Error uploading image",
+                    "details": res.text
+                }), res.status_code
 
         if new_username:
-            payload = { "screen_name": new_username, "name": new_name}
+            payload = {
+                "screen_name": new_username,
+                "name": new_name or ""
+            }
             url = "https://twttrapi.p.rapidapi.com/update-profile"
             res = requests.post(url, headers=headers, data=payload)
-            
-            if not res.ok:
-                return jsonify({"error": "Error actualizando", "details": res.text}), res.status_code
+
+            try:
+                res_json = res.json()
+            except Exception:
+                res_json = {}
+
+            if not res.ok or not res_json.get("success", True):
+                return jsonify({
+                    "error": "Username is already taken",
+                    "details": res_json.get("error", res.text)
+                }), res.status_code if not res.ok else 400
+
+            responses["username_name"] = res_json
+            username_updated = True
 
         updates = []
-        if new_username:
+        if username_updated:
             updates.append(f"username = '{new_username}'")
+            if new_name:
+                updates.append(f"name = '{new_name}'")
+        elif new_name:
+            updates.append(f"name = '{new_name}'")
         if uploaded_file_url:
             updates.append(f"profile_pic = '{uploaded_file_url}'")
-        if new_name:
-            updates.append(f"name = '{new_name}'")
 
         if updates:
             update_query = f"""
@@ -161,12 +184,13 @@ def update_user_profile(twitter_id):
             supabase.storage.from_(BUCKET_NAME).remove([path_to_delete])
 
         return jsonify({
-            "message": "Perfil actualizado correctamente",
+            "message": "Profile updated",
             "api_response": responses
         }), 200
 
     except Exception as e:
-        return jsonify({"error": f"Error inesperado: {str(e)}"}), 500
+        return jsonify({"error": f"Error: {str(e)}"}), 500
+
 
 
 @accounts_bp.route("/accounts", methods=["GET"])
