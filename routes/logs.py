@@ -28,7 +28,7 @@ def get_logs():
 
 def log_usage(api: str, count: int = 1):
     query = f"""
-    INSERT INTO usage (api, requests, timestamp)
+    INSERT INTO usage (api, requests, created_at)
     VALUES ('{api.upper()}', {count}, NOW())
     """
     run_query(query)
