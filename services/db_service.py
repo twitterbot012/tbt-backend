@@ -10,6 +10,7 @@ def get_openai_api_key():
     result = run_query(query, fetchone=True)
     return result[0] if result else None  
 
+
 def get_db():
     if 'db' not in g:
         g.db = pg.Connection(

@@ -6,6 +6,7 @@ from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet
 import time
+from routes.logs import log_usage
 import itertools
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
@@ -79,93 +80,6 @@ async def count_tweets_for_user2(user_id):
     return result[0] if result else 0
 
 
-async def fetch_tweets_for_user(session, user_id, username, limit, fetching_event):
-    """
-    Función asíncrona para buscar tweets de un usuario monitoreado.
-    Se detiene si el evento fetching_event está activado.
-    """
-    if fetching_event.is_set():
-        print(f"⏹️ Proceso detenido para usuario monitoreado: {username}.")
-        return
-
-    tweets_collected_today = await count_tweets_for_user(user_id)
-    if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-        print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets por hora. Saltando usuario {username}.")
-        return
-
-    print(f"📡 Buscando tweets de usuario monitoreado: {username}")
-    headers = {"Authorization": f"Bearer {Config.SOCIALDATA_API_KEY}"}
-    params = {"query": f"from:{username}", "type": "Latest"}
-
-    try:
-        async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
-            data = await response.json()
-            tweets = data.get("tweets", [])[:limit]
-            print(data)
-            for tweet in tweets:
-                if fetching_event.is_set():
-                    print(f"⏹️ Proceso detenido mientras se procesaban tweets de {username}.")
-                    break
-
-                tweet_id = tweet["id_str"]
-                tweet_text = tweet["full_text"]
-                created_at = tweet["tweet_created_at"]
-
-                print(f"✅ Nuevo tweet de {username}: {tweet_text[:50]}...")
-                save_collected_tweet(user_id, "username", username, tweet_id, tweet_text, created_at)
-                print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
-
-                await asyncio.sleep(0.1)
-
-    except Exception as e:
-        log_event(user_id, "ERROR", f"Error obteniendo tweets de {username}: {str(e)}")
-        print(f"❌ Error con {username}: {e}")
-        
-        
-async def fetch_tweets_for_keyword(session, user_id, keyword, limit, fetching_event):
-    if fetching_event.is_set():
-        print(f"⏹️ Proceso detenido para keyword: {keyword}.")
-        return
-
-    tweets_collected_today = await count_tweets_for_user(user_id)
-    if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-        print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets hoy. Saltando keyword {keyword}.")
-        return
-
-    print(f"🔍 Buscando tweets con keyword: {keyword}")
-    headers = {"Authorization": f"Bearer {Config.SOCIALDATA_API_KEY}"}
-    params = {"query": keyword, "type": "Latest"}
-
-    try:
-        async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
-            data = await response.json()
-            tweets = data.get("tweets", [])[:limit]
-
-            for tweet in tweets:
-                if fetching_event.is_set():
-                    print(f"⏹️ Proceso detenido mientras se procesaban tweets con keyword: {keyword}.")
-                    break
-
-                tweets_collected_today = await count_tweets_for_user(user_id)
-                if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-                    print(f"⛔ Usuario {user_id} alcanzó el límite mientras recolectaba. Deteniendo keyword {keyword}.")
-                    break
-
-                tweet_id = tweet["id_str"]
-                tweet_text = tweet["full_text"]
-                created_at = tweet["tweet_created_at"]
-
-                print(f"✅ Nuevo tweet con keyword '{keyword}': {tweet_text[:50]}...")
-                save_collected_tweet(user_id, "keyword", keyword, tweet_id, tweet_text, created_at)
-                print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
-
-                await asyncio.sleep(0.1)
-
-    except Exception as e:
-        log_event(user_id, "ERROR", f"Error obteniendo tweets con la keyword '{keyword}': {str(e)}")
-        print(f"❌ Error con la keyword '{keyword}': {e}")
-
-
 async def extract_by_combination(session, user_id, monitored_users, keywords, limit, fetching_event):
     since_timestamp = int(time.time()) - 4 * 60 * 60
     collected_count = 0
@@ -207,15 +121,18 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
         async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
             if response.status != 200:
                 print(f"❌ Error al buscar tweets ({response.status}) para: {query}")
+                log_usage("SOCIALDATA", count=1)
                 continue
 
             try:
                 data = await response.json()
             except Exception as e:
                 print(f"❌ Error parseando respuesta para {query}: {e}")
+                log_usage("SOCIALDATA", count=1)
                 continue
 
             tweets = data.get("tweets", [])
+            log_usage("SOCIALDATA", count=len(tweets))
             if not tweets:
                 continue
 
@@ -276,6 +193,7 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
         async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
             if response.status != 200:
                 print(f"❌ Error al buscar tweets ({response.status}) para @{username}")
+                log_usage("SOCIALDATA", count=1)
                 continue
 
             try:
@@ -285,6 +203,7 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
                 continue
 
             tweets = data.get("tweets", [])
+            log_usage("SOCIALDATA", count=len(tweets))
             if not tweets:
                 print(f"⚠️ No se encontraron tweets para @{username}")
                 continue
@@ -481,16 +400,19 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
         async with session.get(SOCIALDATA_API_URL, headers=headers_sd, params=params) as response:
             if response.status != 200:
                 print(f"❌ Error al buscar tweets para {username} ({response.status})")
+                log_usage("SOCIALDATA", count=1) 
                 continue
 
             try:
                 data = await response.json()
                 tweets = data.get("tweets", [])
+                log_usage("SOCIALDATA", count=len(tweets))
                 if not tweets:
                     print(f"⚠️ No se encontraron tweets para {username}")
                     continue
             except Exception as e:
                 print(f"❌ Error parseando respuesta de SocialData: {e}")
+                log_usage("SOCIALDATA", count=1) 
                 continue
 
             for tweet in tweets[:10]:
@@ -545,6 +467,7 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
 
                 try:
                     async with session.post(url, data=payload, headers=headers_rapid) as resp:
+                        log_usage("RAPIDAPI")
                         if resp.status == 200:
                             print(f"✅ Acción '{action_type}' realizada sobre tweet {tweet_id[:8]}... {tweet_text[:30]}")
                             count += 1
@@ -564,9 +487,6 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
 
 
 def auto_post_tweet():
-    """
-    Publica un tweet automáticamente para un usuario específico.
-    """
     user_id = 1 
     tweet_text = "¡Este es un tweet de prueba!"
 
@@ -714,14 +634,100 @@ async def post_tweets_for_user(session, user_id, tweets, posting_event, tweet_li
     print(f"✅ Publicación de tweets finalizada para usuario ID: {user_id}.")
 
 
-async def start_tweet_fetcher():
-    print('🚀 Iniciando el servicio de recolección de tweets...')
-    # while True:
-    #     await fetch_tweets_for_all_users()
+# async def start_tweet_fetcher():
+#     print('🚀 Iniciando el servicio de recolección de tweets...')
+#     while True:
+#         await fetch_tweets_for_all_users()
     
-    #     print("⏳ Esperando 5 minutos antes de la próxima búsqueda...")
-    #     await asyncio.sleep(300)  
+#         print("⏳ Esperando 5 minutos antes de la próxima búsqueda...")
+#         await asyncio.sleep(300)  
 
+
+# async def fetch_tweets_for_user(session, user_id, username, limit, fetching_event):
+#     """
+#     Función asíncrona para buscar tweets de un usuario monitoreado.
+#     Se detiene si el evento fetching_event está activado.
+#     """
+#     if fetching_event.is_set():
+#         print(f"⏹️ Proceso detenido para usuario monitoreado: {username}.")
+#         return
+
+#     tweets_collected_today = await count_tweets_for_user(user_id)
+#     if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
+#         print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets por hora. Saltando usuario {username}.")
+#         return
+
+#     print(f"📡 Buscando tweets de usuario monitoreado: {username}")
+#     headers = {"Authorization": f"Bearer {Config.SOCIALDATA_API_KEY}"}
+#     params = {"query": f"from:{username}", "type": "Latest"}
+
+#     try:
+#         async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
+#             data = await response.json()
+#             tweets = data.get("tweets", [])[:limit]
+#             print(data)
+#             for tweet in tweets:
+#                 if fetching_event.is_set():
+#                     print(f"⏹️ Proceso detenido mientras se procesaban tweets de {username}.")
+#                     break
+
+#                 tweet_id = tweet["id_str"]
+#                 tweet_text = tweet["full_text"]
+#                 created_at = tweet["tweet_created_at"]
+
+#                 print(f"✅ Nuevo tweet de {username}: {tweet_text[:50]}...")
+#                 save_collected_tweet(user_id, "username", username, tweet_id, tweet_text, created_at)
+#                 print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
+
+#                 await asyncio.sleep(0.1)
+
+#     except Exception as e:
+#         log_event(user_id, "ERROR", f"Error obteniendo tweets de {username}: {str(e)}")
+#         print(f"❌ Error con {username}: {e}")
+        
+        
+# async def fetch_tweets_for_keyword(session, user_id, keyword, limit, fetching_event):
+#     if fetching_event.is_set():
+#         print(f"⏹️ Proceso detenido para keyword: {keyword}.")
+#         return
+
+#     tweets_collected_today = await count_tweets_for_user(user_id)
+#     if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
+#         print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets hoy. Saltando keyword {keyword}.")
+#         return
+
+#     print(f"🔍 Buscando tweets con keyword: {keyword}")
+#     headers = {"Authorization": f"Bearer {Config.SOCIALDATA_API_KEY}"}
+#     params = {"query": keyword, "type": "Latest"}
+
+#     try:
+#         async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
+#             data = await response.json()
+#             tweets = data.get("tweets", [])[:limit]
+
+#             for tweet in tweets:
+#                 if fetching_event.is_set():
+#                     print(f"⏹️ Proceso detenido mientras se procesaban tweets con keyword: {keyword}.")
+#                     break
+
+#                 tweets_collected_today = await count_tweets_for_user(user_id)
+#                 if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
+#                     print(f"⛔ Usuario {user_id} alcanzó el límite mientras recolectaba. Deteniendo keyword {keyword}.")
+#                     break
+
+#                 tweet_id = tweet["id_str"]
+#                 tweet_text = tweet["full_text"]
+#                 created_at = tweet["tweet_created_at"]
+
+#                 print(f"✅ Nuevo tweet con keyword '{keyword}': {tweet_text[:50]}...")
+#                 save_collected_tweet(user_id, "keyword", keyword, tweet_id, tweet_text, created_at)
+#                 print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
+
+#                 await asyncio.sleep(0.1)
+
+#     except Exception as e:
+#         log_event(user_id, "ERROR", f"Error obteniendo tweets con la keyword '{keyword}': {str(e)}")
+#         print(f"❌ Error con la keyword '{keyword}': {e}")
 
 # async def fetch_tweets_for_single_user(user_id, fetching_event):
 #     """

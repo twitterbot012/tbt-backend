@@ -1,6 +1,7 @@
 import requests
 from services.db_service import run_query, log_event
 import logging
+from routes.logs import log_usage
 
 logging.basicConfig(level=logging.INFO)
 
@@ -60,6 +61,7 @@ def post_tweet(user_id, tweet_text):
 
     try:
         response = requests.post(url, data=payload, headers=headers)
+        log_usage("RAPIDAPI")
 
         if response.status_code == 200 and "data" in response.json():
             tweet_data = response.json()["data"]["create_tweet"]["tweet_result"]["result"]

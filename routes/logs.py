@@ -26,6 +26,14 @@ def get_logs():
     return jsonify(log_list)
 
 
+def log_usage(api: str, count: int = 1):
+    query = f"""
+    INSERT INTO usage (api, requests, timestamp)
+    VALUES ('{api.upper()}', {count}, NOW())
+    """
+    run_query(query)
+
+
 @logs_bp.route("/update_rate_limit", methods=["POST"])
 def update_rate_limit():
     data = request.json

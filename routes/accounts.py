@@ -5,6 +5,9 @@ from supabase import create_client
 import base64
 from urllib.parse import urlparse
 import uuid
+from collections import defaultdict
+from datetime import datetime
+from routes.logs import log_usage
 
 accounts_bp = Blueprint("accounts", __name__)
 
@@ -25,6 +28,12 @@ def get_rapidapi_key():
     return result[0] if result else None
 
 
+def get_openai_api_key():
+    query = "SELECT key FROM api_keys WHERE id = 1"
+    result = run_query(query, fetchone=True)
+    return result[0] if result else None  
+
+
 @accounts_bp.route("/account/<string:twitter_id>/refresh-profile", methods=["POST"])
 def refresh_user_profile(twitter_id):
     API_KEY = get_socialdata_api_key()
@@ -38,6 +47,7 @@ def refresh_user_profile(twitter_id):
         }
         url = f"https://api.socialdata.tools/twitter/user/{twitter_id}"
         response = requests.get(url, headers=headers)
+        log_usage("SOCIALDATA")
 
         if response.status_code == 402:
             return jsonify({"error": "Créditos insuficientes para la API"}), 402
@@ -131,6 +141,7 @@ def update_user_profile(twitter_id):
             payload = {"image_url": uploaded_file_url}
             url = "https://twttrapi.p.rapidapi.com/update-profile-image"
             res = requests.post(url, headers=headers, data=payload)
+            log_usage("RAPIDAPI")
             responses["profile_pic"] = res.json()
 
             if not res.ok:
@@ -146,6 +157,7 @@ def update_user_profile(twitter_id):
             }
             url = "https://twttrapi.p.rapidapi.com/update-profile"
             res = requests.post(url, headers=headers, data=payload)
+            log_usage("RAPIDAPI")
 
             try:
                 res_json = res.json()
@@ -190,7 +202,6 @@ def update_user_profile(twitter_id):
 
     except Exception as e:
         return jsonify({"error": f"Error: {str(e)}"}), 500
-
 
 
 @accounts_bp.route("/accounts", methods=["GET"])
@@ -403,6 +414,28 @@ def delete_account(twitter_id):
     run_query(f"DELETE FROM users WHERE id = {user_id}")
 
     return jsonify({"message": "Cuenta eliminada correctamente"}), 200
+
+
+@accounts_bp.route("/usage/requests-per-day", methods=["GET"])
+def get_requests_grouped_by_api_and_day():
+    query = """
+    SELECT api, DATE(timestamp) AS day, SUM(requests) AS total_requests
+    FROM usage
+    GROUP BY api, day
+    ORDER BY day DESC, api
+    """
+    results = run_query(query, fetchall=True)
+
+    if not results:
+        return jsonify({"message": "No hay registros de uso"}), 200
+
+    grouped_data = defaultdict(lambda: {})
+
+    for api, day, total_requests in results:
+        day_str = day.strftime("%Y-%m-%d") if isinstance(day, datetime) else str(day)
+        grouped_data[day_str][api] = total_requests
+
+    return jsonify(grouped_data), 200
 
 
 # OLD

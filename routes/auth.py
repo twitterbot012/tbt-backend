@@ -4,6 +4,7 @@ from services.db_service import run_query
 from config import Config
 import requests
 import logging
+from routes.logs import log_usage
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -84,6 +85,7 @@ def login():
 
     try:
         response = requests.post(url, headers=headers, data=payload)
+        log_usage("RAPIDAPI")
         response_data = response.json()
 
         if response.status_code == 200 and response_data.get("success"):
@@ -126,6 +128,7 @@ def login_2fa():
 
     try:
         response = requests.post(url, headers=headers, data=payload)
+        log_usage("RAPIDAPI")
         response_data = response.json()
 
         if response.status_code == 200 and response_data.get("success"):

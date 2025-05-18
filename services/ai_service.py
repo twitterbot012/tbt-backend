@@ -4,6 +4,9 @@ from config import Config
 from openai import OpenAI
 from datetime import datetime, timedelta
 from services.db_service import run_query
+from routes.logs import log_usage
+import requests
+
 
 def get_openai_api_key():
     query = "SELECT key FROM api_keys WHERE id = 1"
@@ -58,6 +61,7 @@ def translate_text_with_openai(text, target_language, custom_style):
                 max_tokens=100,
                 temperature=0.5
             )
+            log_usage("OPENROUTER")
 
             if response.choices and response.choices[0].message.content:
                 translated_text = response.choices[0].message.content.strip()
@@ -110,6 +114,7 @@ def generate_reply_with_openai(tweet_text, target_language):
                 max_tokens=80,
                 temperature=0.7
             )
+            log_usage("OPENROUTER")
 
             if response.choices and response.choices[0].message.content:
                 comment = response.choices[0].message.content.strip()
@@ -172,6 +177,7 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
                 max_tokens=5,
                 temperature=0
             )
+            log_usage("OPENROUTER")
 
             if response.choices and response.choices[0].message and response.choices[0].message.content:
                 answer = response.choices[0].message.content.strip().upper()
@@ -201,8 +207,9 @@ def verify_tweet_priority(tweet_id, user_id):
     }
 
     try:
-        import requests
         response = requests.get(url, headers=headers)
+        log_usage("RAPIDAPI")
+
         if response.status_code != 200:
             print(f"❌ Error al obtener el tweet: {response.status_code}")
             return None
