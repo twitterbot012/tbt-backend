@@ -419,7 +419,7 @@ def delete_account(twitter_id):
 @accounts_bp.route("/usage/requests-per-day", methods=["GET"])
 def get_requests_grouped_by_api_and_day():
     query = """
-    SELECT api, DATE(timestamp) AS day, SUM(requests) AS total_requests
+    SELECT api, DATE(created_at) AS day, SUM(requests) AS total_requests
     FROM usage
     GROUP BY api, day
     ORDER BY day DESC, api
