@@ -55,6 +55,25 @@ def get_all_tweets(twitter_id):
     ]), 200
 
 
+@tweets_bp.route("/get-posted-tweets/<twitter_id>", methods=["GET"])
+def get_posted_tweets(twitter_id):
+    query = f"""
+        SELECT id, user_id, tweet_text, created_at
+        FROM posted_tweets 
+        WHERE user_id = '{twitter_id}' 
+        ORDER BY created_at DESC
+    """
+    tweets = run_query(query, fetchall=True)
+    
+    if not tweets:
+        return jsonify({"message": "No available tweets."}), 404
+    
+    return jsonify([
+        {"id": t[0], "user_id": t[1], "tweet_text": t[2], "created_at": t[3]} 
+        for t in tweets
+    ]), 200
+
+
 @tweets_bp.route("/delete-tweet/<tweet_id>", methods=["DELETE"])
 def delete_tweet(tweet_id):
     query = f"DELETE FROM collected_tweets WHERE tweet_id = '{tweet_id}'"

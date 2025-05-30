@@ -76,6 +76,61 @@ def translate_text_with_openai(text, target_language, custom_style):
     return None
 
 
+def generate_post_with_openai(tweet_text, target_language):
+    api_key = get_openai_api_key()
+    if not api_key:
+        print("❌ No se pudo obtener la API Key de OpenAI.")
+        return None
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key
+    )
+
+    prompt = (
+        f"""You are a social media assistant. {tweet_text}. Obligatory target language: {target_language}".
+        Your tweet should be engaging, natural, and easy to read.
+        Do not include hashtags, mentions, or emojis. Avoid referencing the filename or explaining what the media is.
+        Keep it short and compelling. The tweet should feel like something a real person post.
+        Only output the tweet text. Do not include any labels or introductions.
+        """
+    )
+
+    models_to_try = [
+        "meta-llama/llama-4-scout:free",
+        "google/gemini-2.0-flash-001",
+        "deepseek/deepseek-chat-v3-0324",
+        "openai/gpt-4o-2024-11-20",
+        "anthropic/claude-3.7-sonnet"
+    ]
+
+    for model in models_to_try:
+        try:
+            print(f"🔄 Intentando generar comentario con modelo: {model}")
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant who replies to tweets in a smart and social way."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=40,
+                temperature=0.7
+            )
+            log_usage("OPENROUTER")
+
+            if response.choices and response.choices[0].message.content:
+                comment = response.choices[0].message.content.strip()
+                print(f"✅ Comentario generado con {model}: {comment}")
+                return comment
+            else:
+                print(f"⚠️ El modelo {model} no devolvió contenido.")
+        except Exception as e:
+            print(f"❌ Error con el modelo {model}: {str(e)}")
+
+    print("❌ No se pudo generar un comentario con ninguno de los modelos.")
+    return None
+
+
 def generate_reply_with_openai(tweet_text, target_language):
     api_key = get_openai_api_key()
     if not api_key:
@@ -89,7 +144,8 @@ def generate_reply_with_openai(tweet_text, target_language):
 
     prompt = (
         f"""You are a social media assistant. Read the following tweet and reply to it
-        It needs to be obligatory naturally in {target_language}, with a friendly tone. 
+        Always respond in a friendly, natural, and concise way obligatory in {target_language}.
+        If the tweet contains sensitive or inappropriate content (e.g., drugs, violence, hate), do not mention that directly. Instead, reply with a neutral or light-hearted message that shifts focus or avoids the topic gracefully.
         The reply should be context-aware and concise. Do not repeat the tweet. 
         Here is the tweet: '{tweet_text}' """
     )
@@ -227,9 +283,29 @@ def verify_tweet_priority(tweet_id, user_id):
     except Exception as e:
         print(f"❌ Excepción al procesar el tweet {tweet_id}: {e}")
         return None
+    
+    
+def save_collected_tweet_simple(user_id, source_type, source_value, tweet_id, tweet_text, created_at):
+    check_query = f"SELECT 1 FROM collected_tweets WHERE tweet_id = '{tweet_id}' LIMIT 1"
+    existing_tweet = run_query(check_query, fetchone=True)
+    if existing_tweet:
+        print(f"⚠ Tweet {tweet_id} ya existe. No se guardará.")
+        return  
+
+    insert_query = f"""
+    INSERT INTO collected_tweets (user_id, source_type, source_value, tweet_id, tweet_text, created_at)
+    VALUES ({user_id if user_id is not None else 'NULL'}, 
+            '{source_type}', 
+            '{source_value if source_value else ''}', 
+            '{tweet_id}', 
+            '{tweet_text.replace("'", "''")}', 
+            '{created_at.strftime('%Y-%m-%d %H:%M:%S')}')
+    """
+    run_query(insert_query)
+    print(f"✅ Tweet {tweet_id} guardado correctamente (modo simple).")
 
 
-def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_text, created_at):
+def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_text, created_at, extraction_filter):
     check_query = f"SELECT 1 FROM collected_tweets WHERE tweet_id = '{tweet_id}' LIMIT 1"
     existing_tweet = run_query(check_query, fetchone=True)
     if existing_tweet:
@@ -270,31 +346,32 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
         return
 
     print(f"🌐 Tweet traducido al idioma '{target_language}': {translated_text}")
+    
+    if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
+        pass
+    else:
+        priority = verify_tweet_priority(tweet_id, user_id)
+            
+        insert_query = f"""
+        INSERT INTO collected_tweets (user_id, source_type, source_value, tweet_id, tweet_text, created_at)
+        VALUES ({user_id if user_id is not None else 'NULL'}, 
+                '{source_type}', 
+                '{source_value}', 
+                '{tweet_id}', 
+                '{translated_text.replace("'", "''")}', 
+                '{created_at}')
+                """
+        run_query(insert_query)
+        print(f"✅ Tweet {tweet_id} guardado correctamente.")
 
-    # Luego ir al front y mostrar la prioridad en los tweets y que sea editable
- 
-    priority = verify_tweet_priority(tweet_id, user_id)
- 
-    insert_query = f"""
-    INSERT INTO collected_tweets (user_id, source_type, source_value, tweet_id, tweet_text, created_at)
-    VALUES ({user_id if user_id is not None else 'NULL'}, 
-            '{source_type}', 
-            '{source_value}', 
-            '{tweet_id}', 
-            '{translated_text.replace("'", "''")}', 
-            '{created_at}')
-            """
-    run_query(insert_query)
-    print(f"✅ Tweet {tweet_id} guardado correctamente.")
+        update_query = f"""
+        UPDATE collected_tweets
+        SET priority = {priority}
+        WHERE tweet_id = '{tweet_id}'
+        """
+        run_query(update_query)
 
-    update_query = f"""
-    UPDATE collected_tweets
-    SET priority = {priority}
-    WHERE tweet_id = '{tweet_id}'
-    """
-    run_query(update_query)
-
-    print(f"✅ Tweet {tweet_id} priorizado correctamente.")
+        print(f"✅ Tweet {tweet_id} priorizado correctamente.")
 
 
 # def translate_text_with_openai(text, target_language, custom_style):

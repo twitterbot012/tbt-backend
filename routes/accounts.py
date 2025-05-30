@@ -8,6 +8,9 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 from routes.logs import log_usage
+from openai import OpenAI
+import pytz
+import resend
 
 accounts_bp = Blueprint("accounts", __name__)
 
@@ -15,6 +18,7 @@ SUPABASE_URL = "https://tmosrdszzpgfdbexstbu.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtb3NyZHN6enBnZmRiZXhzdGJ1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczOTQ3NTMyOSwiZXhwIjoyMDU1MDUxMzI5fQ.cUiNxjRcnwuelk9XHbRiRgpL88U43OBJbum82vnQlk8" 
 BUCKET_NAME = "images"
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+resend.api_key = "re_9hbEHRuy_KeEhu4QXqGb3SR7tMwN2PrBr" 
 
 def get_socialdata_api_key():
     query = "SELECT key FROM api_keys WHERE id = 2"  
@@ -81,6 +85,77 @@ def refresh_user_profile(twitter_id):
             "followers": followers_count,
             "following": friends_count,
             "name": name
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@accounts_bp.route("/account/refresh-all-profiles", methods=["POST"])
+def refresh_all_user_profiles():
+    API_KEY = get_socialdata_api_key()
+    if not API_KEY:
+        return jsonify({"error": "API Key no configurada"}), 500
+
+    try:
+        users = run_query("SELECT twitter_id FROM users WHERE twitter_id IS NOT NULL")
+        if not users:
+            return jsonify({"message": "No hay usuarios con twitter_id"}), 200
+
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Accept": "application/json"
+        }
+
+        updated = []
+        failed = []
+
+        for user in users:
+            twitter_id = user["twitter_id"]
+            try:
+                url = f"https://api.socialdata.tools/twitter/user/{twitter_id}"
+                response = requests.get(url, headers=headers)
+                log_usage("SOCIALDATA")
+
+                if response.status_code == 402:
+                    failed.append({"twitter_id": twitter_id, "error": "Créditos insuficientes"})
+                    break  
+
+                if response.status_code == 404:
+                    failed.append({"twitter_id": twitter_id, "error": "No encontrado"})
+                    continue
+
+                if not response.ok:
+                    failed.append({"twitter_id": twitter_id, "error": "Error externo"})
+                    continue
+
+                data = response.json()
+                username = data.get("screen_name")
+                name = data.get("name", '(Refresh Profile)')
+                profile_pic = data.get("profile_image_url_https")
+                followers_count = data.get("followers_count")
+                friends_count = data.get("friends_count")
+
+                if not username or not profile_pic:
+                    failed.append({"twitter_id": twitter_id, "error": "Faltan datos esenciales"})
+                    continue
+
+                update_query = f"""
+                UPDATE users
+                SET username = '{username}', profile_pic = '{profile_pic}', followers = '{followers_count}', following = '{friends_count}', name = '{name}'
+                WHERE twitter_id = '{twitter_id}'
+                """
+                run_query(update_query)
+                updated.append(twitter_id)
+
+            except Exception as inner_error:
+                failed.append({"twitter_id": twitter_id, "error": str(inner_error)})
+
+        return jsonify({
+            "updated_count": len(updated),
+            "failed_count": len(failed),
+            "updated": updated,
+            "failed": failed
         }), 200
 
     except Exception as e:
@@ -237,7 +312,8 @@ def get_account_details(twitter_id):
     user_query = f"""
     SELECT id, username, session, password, language, custom_style, 
     followers, following, status, extraction_filter, profile_pic, 
-    notes, likes_limit, retweets_limit, comments_limit, extraction_method, name
+    notes, likes_limit, retweets_limit, comments_limit, extraction_method, 
+    name, ai_score, follows_limit, verified
     FROM users
     WHERE twitter_id = '{twitter_id}'
     """
@@ -265,8 +341,23 @@ def get_account_details(twitter_id):
         "retweets_limit": user_data[13],
         "comments_limit": user_data[14],
         "extraction_method": user_data[15],
-        "name": user_data[16]
+        "name": user_data[16],
+        "ai_score": user_data[17],
+        "follows_limit": user_data[18],
+        "verified": user_data[19]
     }
+    
+    follow_users_query = f"""
+    SELECT twitter_username
+    FROM follow_users
+    WHERE user_id = '{id}'
+    """
+    
+    follow_users = run_query(follow_users_query, fetchall=True)
+    follow_users_list = [
+        {"twitter_username": mu[0]}
+        for mu in follow_users
+    ]
     
     like_users_query = f"""
     SELECT twitter_username
@@ -335,7 +426,8 @@ def get_account_details(twitter_id):
         "comments": comment_users_list,
         "likes": like_users_list,
         "retweets": retweet_users_list,
-        "total_posts": posts_count
+        "total_posts": posts_count,
+        "follows": follow_users_list
     }
     return jsonify(response), 200
 
@@ -352,10 +444,12 @@ def update_account(twitter_id):
     notes = data.get("notes", '')
     retweets = data.get("retweets", [])
     comments = data.get("comments", [])
+    follows = data.get("follows", [])
     likes = data.get("likes", [])
     retweets_limit = data.get("retweets_limit", [])
     comments_limit = data.get("comments_limit", [])
     likes_limit = data.get("likes_limit", [])
+    follows_limit = data.get("follows_limit", [])
     extraction_method = data.get("extraction_method", 1)
 
     user_query = f"SELECT id FROM users WHERE twitter_id = '{twitter_id}'"
@@ -369,7 +463,7 @@ def update_account(twitter_id):
     update_user_query = f"""
     UPDATE users
     SET language = '{language}', custom_style = '{custom_style}', extraction_filter = '{extraction_filter}',
-    notes = '{notes}', likes_limit = '{likes_limit}', comments_limit = '{comments_limit}',
+    notes = '{notes}', likes_limit = '{likes_limit}', comments_limit = '{comments_limit}', follows_limit = '{follows_limit}',
     retweets_limit = '{retweets_limit}', extraction_method = '{extraction_method}'
     WHERE twitter_id = '{twitter_id}'
     """
@@ -386,6 +480,10 @@ def update_account(twitter_id):
     run_query(f"DELETE FROM retweet_users WHERE user_id = {user_id}")
     for retweet in retweets:
         run_query(f"INSERT INTO retweet_users (user_id, twitter_username) VALUES ({user_id}, '{retweet}')")
+        
+    run_query(f"DELETE FROM follow_users WHERE user_id = {user_id}")
+    for follow in follows:
+        run_query(f"INSERT INTO follow_users (user_id, twitter_username) VALUES ({user_id}, '{follow}')")
         
     run_query(f"DELETE FROM comment_users WHERE user_id = {user_id}")
     for comment in comments:
@@ -412,6 +510,13 @@ def delete_account(twitter_id):
     run_query(f"DELETE FROM monitored_users WHERE user_id = {user_id}")
     run_query(f"DELETE FROM user_keywords WHERE user_id = {user_id}")
     run_query(f"DELETE FROM users WHERE id = {user_id}")
+    run_query(f"DELETE FROM retweet_users WHERE user_id = {user_id}")
+    run_query(f"DELETE FROM follow_users WHERE user_id = {user_id}")
+    run_query(f"DELETE FROM comment_users WHERE user_id = {user_id}")
+    run_query(f"DELETE FROM like_users WHERE user_id = {user_id}")
+    run_query(f"DELETE FROM retweet_users WHERE user_id = {user_id}")
+    run_query(f"DELETE FROM collected_tweets WHERE user_id = {user_id}")
+    run_query(f"DELETE FROM posted_tweets WHERE user_id = {user_id}")
 
     return jsonify({"message": "Cuenta eliminada correctamente"}), 200
 
@@ -538,3 +643,121 @@ def old_update_account(twitter_id):
         run_query(f"INSERT INTO user_keywords (user_id, keyword) VALUES ({user_id}, '{keyword}')")
 
     return jsonify({"message": "Cuenta actualizada correctamente"}), 200
+
+
+@accounts_bp.route("/account/<string:twitter_id>/verify-category", methods=["POST"])
+def verify_account_category(twitter_id):
+    try:
+        user_query = f"""
+        SELECT id, username, name
+        FROM users
+        WHERE twitter_id = '{twitter_id}'
+        """
+        user_data = run_query(user_query, fetchone=True)
+
+        if not user_data:
+            return jsonify({"error": "Cuenta no encontrada"}), 404
+
+        user_id, username, name = user_data
+
+        monitored_query = f"""
+        SELECT twitter_username
+        FROM monitored_users
+        WHERE user_id = '{user_id}'
+        """
+        monitored_users = run_query(monitored_query, fetchall=True)
+        monitored_list = [u[0] for u in monitored_users]
+
+        keywords_query = f"""
+        SELECT keyword
+        FROM user_keywords
+        WHERE user_id = '{user_id}'
+        """
+        keywords = run_query(keywords_query, fetchall=True)
+        keywords_list = [k[0] for k in keywords]
+
+        api_key = get_openai_api_key()
+        if not api_key:
+            return jsonify({"error": "No se pudo obtener la API Key de OpenAI"}), 500
+
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key
+        )
+
+        context = f"""
+        The user's Twitter handle is @{username} and the name is "{name}".
+        They monitor these users: {", ".join(monitored_list)}.
+        And these keywords: {", ".join(keywords_list)}.
+
+        Based on this data, is the monitored content consistent with the user's name and handle?
+        Return only one of the following values: "1" for verified, "0" for not verified, and "-" for inconclusive.
+        """
+
+        models_to_try = [
+            "meta-llama/llama-4-scout:free",
+            "google/gemini-2.0-flash-001",
+            "deepseek/deepseek-chat-v3-0324",
+            "openai/gpt-4o-2024-11-20",
+            "anthropic/claude-3.7-sonnet"
+        ]
+
+        for model in models_to_try:
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are a content verification assistant."},
+                        {"role": "user", "content": context}
+                    ],
+                    max_tokens=10,
+                    temperature=0.2
+                )
+                log_usage("OPENROUTER")
+                if response.choices and response.choices[0].message.content:
+                    answer = response.choices[0].message.content.strip()
+                    if answer in ["1", "0", "-"]:
+                        run_query(f"UPDATE users SET verified = '{answer}' WHERE id = '{user_id}'")
+                        return jsonify({"result": answer}), 200
+            except Exception as e:
+                print(f"Error usando modelo {model}: {e}")
+
+        return jsonify({"error": "No se pudo verificar con ningún modelo"}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@accounts_bp.route("/usage/email-today", methods=["POST"])
+def send_usage_email():
+    try:
+        india_time = datetime.now(pytz.timezone("Asia/Kolkata"))
+        formatted_date = india_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        today_query = """
+        SELECT api, SUM(requests) as total_requests
+        FROM usage
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY api
+        """
+        results = run_query(today_query, fetchall=True)
+
+        if not results:
+            return jsonify({"message": "No usage today"}), 200
+
+        html = f"<h2>Daily APIs usage report</h2><p>Date: {formatted_date}</p><ul>"
+        for api, total in results:
+            html += f"<li><b>{api}</b>: {total} requests</li>"
+        html += "</ul>"
+
+        response = resend.Emails.send({
+            "from": "onboarding@resend.dev",
+            "to": "niranjan.govindaraju.vercel@gmail.com", 
+            "subject": f"APIs Usage - Daily Report ({formatted_date})",
+            "html": html
+        })
+
+        return jsonify({"message": "Email Sent.", "response": response}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

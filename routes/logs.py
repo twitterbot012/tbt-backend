@@ -2,8 +2,24 @@ from flask import Blueprint, jsonify, request
 from services.db_service import run_query
 import logging
 from datetime import datetime, timedelta, timezone
+from openai import OpenAI
+import http.client
+import json
 
 logs_bp = Blueprint("logs", __name__)
+
+
+def get_openai_api_key():
+    query = "SELECT key FROM api_keys WHERE id = 1"
+    result = run_query(query, fetchone=True)
+    return result[0] if result else None  
+
+
+def get_rapidapi_key():
+    query = "SELECT key FROM api_keys WHERE id = 3" 
+    result = run_query(query, fetchone=True)
+    return result[0] if result else None  
+
 
 @logs_bp.route("/logs", methods=["GET"])
 def get_logs():
@@ -140,9 +156,10 @@ def get_api_key(key_id):
         return jsonify({"error": "Error interno"}), 500
     
     
-@logs_bp.route("/cleanup-old-records", methods=["DELETE"])
+@logs_bp.route("/cleanup-old-records", methods=["POST"])
 def delete_old_records():
     try:
+
         seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
         date_limit = seven_days_ago.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -150,12 +167,85 @@ def delete_old_records():
             f"DELETE FROM random_actions WHERE created_at < '{date_limit}'",
             f"DELETE FROM posted_tweets WHERE created_at < '{date_limit}'"
         ]
-
         for query in queries:
             run_query(query)
 
-        return jsonify({"message": "Registros antiguos eliminados correctamente"}), 200
+        users = run_query("SELECT id, username FROM users WHERE username IS NOT NULL", fetchall=True)
+        rapidapi_key = get_rapidapi_key()
+        openai_key = get_openai_api_key()
+
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openai_key)
+
+        for user_id, username in users:
+            print(f"🟢 Procesando usuario: {username}")
+            try:
+                conn = http.client.HTTPSConnection("twttrapi.p.rapidapi.com")
+                headers = {
+                    'x-rapidapi-key': rapidapi_key,
+                    'x-rapidapi-host': "twttrapi.p.rapidapi.com"
+                }
+                conn.request("GET", f"/get-user?username={username}", headers=headers)
+                res = conn.getresponse()
+                data = json.loads(res.read().decode("utf-8"))
+                log_usage("RAPIDAPI")
+
+                result = data
+                print(f"🟢 Procesando result: {data}")
+                if not result:
+                    continue
+
+                prompt = f"""
+                You are a Twitter profile analyst. Evaluate the following profile and return only a number from 1 to 100 representing its "AI Score", where 1 means irrelevant and 100 means highly influential or well-optimized.
+
+                Data:
+                - Followers: {result.get("followers_count", 0)}
+                - Following: {result.get("friends_count", 0)}
+                - Tweets posted: {result.get("statuses_count", 0)}
+                - Has description: {"Yes" if result.get("description") else "No"}
+                - Has profile image: {"Yes" if result.get("profile_image_url_https") else "No"}
+                - Has banner: {"Yes" if result.get("profile_banner_url") else "No"}
+                - Account age: {result.get("created_at")}
+                - Likes count: {result.get("favourites_count")}
+
+                Return ONLY the numeric score.
+                """
+
+                score = None
+                for model in [
+                    "meta-llama/llama-4-scout:free",
+                    "google/gemini-2.0-flash-001",
+                    "deepseek/deepseek-chat-v3-0324",
+                    "openai/gpt-4o-2024-11-20",
+                    "anthropic/claude-3.7-sonnet"
+                ]:
+                    try:
+                        response = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": "Sos un evaluador de perfiles de redes sociales."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            max_tokens=5,
+                            temperature=0
+                        )
+                        log_usage("OPENROUTER")
+                        score_raw = response.choices[0].message.content.strip()
+                        print(f"📊 Respuesta cruda del modelo: {score_raw}")
+                        score = int(''.join(filter(str.isdigit, score_raw)))
+                        break
+                    except Exception as e:
+                        logging.warning(f"Modelo {model} falló: {e}")
+
+                print(score)
+                if score:
+                    run_query(f"UPDATE users SET ai_score = {score} WHERE id = {user_id}")
+
+            except Exception as e:
+                logging.error(f"Error procesando usuario {username}: {e}")
+                continue
+
+        return jsonify({"message": "Registros antiguos eliminados y AI Scores actualizados"}), 200
 
     except Exception as e:
-        logging.error(f"Error al eliminar registros antiguos: {e}")
-        return jsonify({"error": "Error interno al eliminar registros"}), 500
+        logging.error(f"Error general: {e}")
+        return jsonify({"error": "Error interno al procesar registros"}), 500

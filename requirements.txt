@@ -11,3 +11,8 @@ asyncio
 gunicorn
 fpdf
 supabase
+python-magic
+httpx
+resend
+google-api-python-client 
+google-auth

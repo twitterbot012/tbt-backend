@@ -1,16 +1,39 @@
 import asyncio
 import aiohttp
 from services.db_service import run_query, log_event
-from services.ai_service import save_collected_tweet, generate_reply_with_openai
+from services.ai_service import save_collected_tweet, generate_reply_with_openai, generate_post_with_openai, save_collected_tweet_simple
 from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet
 import time
 from routes.logs import log_usage
 import itertools
+import re
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
+import os
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "service_account.json")
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+
+def get_drive_service():
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    return build("drive", "v3", credentials=creds)
+
+
+def extract_folder_id(url):
+    match = re.search(r"/folders/([a-zA-Z0-9_-]+)", url)
+    return match.group(1) if match else None
+
+
+def extract_base_name(filename):
+    return re.sub(r'_\d+(?=\.\w+$)', '', filename)
+
 
 def get_socialdata_api_key():
     query = "SELECT key FROM api_keys WHERE id = 2"  
@@ -50,6 +73,12 @@ def get_like_limit_per_hour(user_id):
 
 def get_comment_limit_per_hour(user_id):
     query = f"SELECT comments_limit FROM users WHERE id = {user_id}"
+    result = run_query(query, fetchone=True)
+    return result[0] if result else 1
+
+
+def get_follow_limit_per_hour(user_id):
+    query = f"SELECT follows_limit FROM users WHERE id = {user_id}"
     result = run_query(query, fetchone=True)
     return result[0] if result else 1
 
@@ -143,8 +172,11 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
                 tweet_id = tweet["id_str"]
                 tweet_text = tweet["full_text"]
                 created_at = tweet["tweet_created_at"]
+                
+                # if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
+                #     continue 
 
-                save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at)
+                save_collected_tweet(user_id, "combined", None, tweet_id, tweet_text, created_at, extraction_filter)
                 collected_count += 1
                 await asyncio.sleep(0.1)
 
@@ -216,7 +248,10 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
                 tweet_text = tweet["full_text"]
                 created_at = tweet["tweet_created_at"]
 
-                save_collected_tweet(user_id, "full_account_copy", username, tweet_id, tweet_text, created_at)
+                # if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
+                #     continue 
+
+                save_collected_tweet(user_id, "full_account_copy", username, tweet_id, tweet_text, created_at, extraction_filter)
                 collected_count += 1
                 print(f"💾 Tweet guardado de @{username}: {tweet_id}")
                 await asyncio.sleep(0.1)
@@ -234,16 +269,29 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
 
         if extraction_method == 1:
             count = await extract_by_combination(session, user_id, monitored_users, keywords, limit, fetching_event)
+
         elif extraction_method == 2:
             count = await extract_by_copy_user(session, user_id, monitored_users, limit, fetching_event)
+
         elif extraction_method == 3:
-            count = await extract_by_combination(session, user_id, monitored_users, keywords, limit, fetching_event)
+            drive_link = run_query(f"SELECT drive_link FROM users WHERE id = {user_id}", fetchone=True)
+            if not drive_link or not drive_link[0]:
+                print(f"⚠️ Usuario {user_id} no tiene drive_link configurado.")
+                return
+
+            folder_id = extract_folder_id(drive_link[0])
+            if not folder_id:
+                print(f"❌ No se pudo extraer folder_id del link: {drive_link[0]}")
+                return
+
+            count = await extract_from_drive_link(user_id, folder_id, drive_link[0])
+
         else:
             print(f"⚠️ Método de extracción desconocido: {extraction_method}")
             return
 
         print(f"🎯 Finalizado. Total tweets extraídos: {count}/{limit}")
-    
+
     except asyncio.CancelledError:
         print(f"⏹️ Tarea cancelada para usuario ID: {user_id}.")
         raise
@@ -264,14 +312,15 @@ async def fetch_tweets_for_single_user(user_id, fetching_event):
 
     query_keywords = f"SELECT DISTINCT keyword FROM user_keywords WHERE user_id = '{user_id}'"
     monitored_keywords = run_query(query_keywords, fetchall=True) or []
+    extraction_method = get_extraction_method(user_id)
 
-    if not monitored_users:
-        print(f"⚠ Usuario {user_id} no tiene usuarios o palabras clave monitoreadas.")
-        return
+    if extraction_method != 3:
+        if not monitored_users:
+            print(f"⚠ Usuario {user_id} no tiene usuarios o palabras clave monitoreadas.")
+            return
 
     limit_ph = await get_tweet_limit_per_hour(user_id)
     limit = round(limit_ph * 1.3)
-    extraction_method = get_extraction_method(user_id)
     
     async with aiohttp.ClientSession() as session:
         await fetch_tweets_for_monitored_users_with_keywords(
@@ -364,11 +413,13 @@ async def fetch_random_tasks_for_user(user_id, fetching_event):
     comment_users = run_query(f"SELECT twitter_username FROM comment_users WHERE user_id = '{user_id}'", fetchall=True)
     retweet_users = run_query(f"SELECT twitter_username FROM retweet_users WHERE user_id = '{user_id}'", fetchall=True)
     language = run_query(f"SELECT language FROM users WHERE id = '{user_id}'", fetchone=True)
+    follow_targets = run_query(f"SELECT twitter_username FROM follow_users WHERE user_id = '{user_id}'", fetchall=True)
 
     async with aiohttp.ClientSession() as session:
         await run_random_actions(session, user_id, [u[0] for u in like_users], "like", get_like_limit_per_hour(user_id), session_token[0], fetching_event)
         await run_random_actions(session, user_id, [u[0] for u in retweet_users], "retweet", get_retweet_limit_per_hour(user_id), session_token[0], fetching_event)
         await run_random_actions(session, user_id, [u[0] for u in comment_users], "reply", get_comment_limit_per_hour(user_id), session_token[0], fetching_event, language)
+        await run_random_actions(session, user_id, [u[0] for u in follow_targets], "follow", get_follow_limit_per_hour(user_id), session_token[0], fetching_event)
 
     print(f"✅ Acciones aleatorias finalizadas para usuario ID: {user_id}")
 
@@ -383,6 +434,109 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
     print(f"🎯 Ejecutando '{action_type}' para user ID {user_id}... (límite: {limit})")
     since_timestamp = int(time.time()) - 4 * 60 * 60
     count = 0
+    
+    if action_type == "follow":
+        check_follows_last_hour = run_query(
+            f"""
+            SELECT COUNT(*) FROM random_actions
+            WHERE user_id = '{user_id}' AND action_type = 'follow'
+            AND created_at >= NOW() - INTERVAL '1 hour'
+            """,
+            fetchone=True
+        )
+        count = check_follows_last_hour[0] if check_follows_last_hour else 0
+
+        if count >= limit:
+            print(f"⛔ Usuario {user_id} ya alcanzó el límite de follows ({limit}) en la última hora.")
+            return
+
+        min_followers = 100
+
+        for target_username in usernames:
+            if fetching_event.is_set():
+                return
+
+            url = f"https://twttrapi.p.rapidapi.com/user-followers?username={target_username}&count=20"
+            headers_followers = {
+                'x-rapidapi-key': rapidkey,
+                'x-rapidapi-host': "twttrapi.p.rapidapi.com"
+            }
+
+            try:
+                async with session.get(url, headers=headers_followers) as resp:
+                    if resp.status != 200:
+                        print(f"❌ Error al obtener followers de @{target_username} ({resp.status})")
+                        log_usage("RAPIDAPI")
+                        continue
+
+                    data = await resp.json()
+                    followers = []
+                    instructions = data.get("data", {}).get("user", {}).get("timeline_response", {}).get("timeline", {}).get("instructions", [])
+
+                    for instruction in instructions:
+                        if instruction.get("__typename") == "TimelineAddEntries":
+                            for entry in instruction.get("entries", []):
+                                try:
+                                    user_result = entry["content"]["content"]["userResult"]["result"]
+                                    followers.append(user_result)
+                                except KeyError:
+                                    continue
+                    
+                    log_usage("RAPIDAPI", count=len(followers))
+                    
+                    for user in followers:
+                        if fetching_event.is_set():
+                            return
+
+                        if count >= limit:
+                            print(f"✅ Límite alcanzado ({limit}) para acción 'follow'")
+                            return
+
+                        legacy = user.get("legacy", {})
+                        verified = user.get("is_blue_verified", False)
+                        followers_count = legacy.get("followers_count", 0)
+                        username_to_follow = legacy.get("screen_name") or user.get("screen_name")
+                        print(f'{username_to_follow} {followers_count} {verified}')
+                        if not username_to_follow or not verified or followers_count < min_followers:
+                            continue
+
+                        already_followed = run_query(
+                            f"SELECT 1 FROM random_actions WHERE twitter_id = '{username_to_follow}' AND action_type = 'follow'",
+                            fetchone=True
+                        )
+                        if already_followed:
+                            continue
+
+                        url_follow = "https://twttrapi.p.rapidapi.com/follow-user"
+                        payload = f"username={username_to_follow}"
+                        headers_follow = {
+                            'x-rapidapi-key': rapidkey,
+                            'x-rapidapi-host': "twttrapi.p.rapidapi.com",
+                            'Content-Type': "application/x-www-form-urlencoded",
+                            'twttr-session': session_token
+                        }
+
+                        try:
+                            async with session.post(url_follow, data=payload, headers=headers_follow) as follow_resp:
+                                log_usage("RAPIDAPI")
+                                if follow_resp.status == 200:
+                                    print(f"✅ Seguido @{username_to_follow} ({followers_count} seguidores)")
+                                    run_query(f"""
+                                        INSERT INTO random_actions (user_id, twitter_id, action_type, created_at)
+                                        VALUES ('{user_id}', '{username_to_follow}', 'follow', NOW())
+                                    """)
+                                    count += 1
+                                else:
+                                    print(f"❌ Error al seguir @{username_to_follow} ({follow_resp.status})")
+                        except Exception as e:
+                            print(f"❌ Excepción al seguir a @{username_to_follow}: {e}")
+
+                        await asyncio.sleep(0.2)
+
+            except Exception as e:
+                print(f"❌ Error general al obtener followers de @{target_username}: {e}")
+
+        return
 
     for username in usernames:
         if fetching_event.is_set():
@@ -392,6 +546,7 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
         if count >= limit:
             print(f"✅ Límite alcanzado ({limit}) para acción '{action_type}'")
             return
+        
 
         query = f"from:{username} since_time:{since_timestamp}"
         params = {"query": query, "type": "Latest"}
@@ -472,8 +627,8 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
                             print(f"✅ Acción '{action_type}' realizada sobre tweet {tweet_id[:8]}... {tweet_text[:30]}")
                             count += 1
                             insert_query = f"""
-                                INSERT INTO random_actions (user_id, twitter_id, created_at)
-                                VALUES ('{user_id}', '{tweet_id}', NOW())
+                                INSERT INTO random_actions (user_id, twitter_id, action_type, created_at)
+                                VALUES ('{user_id}', '{tweet_id}', '{action_type}', NOW())
                             """
                             run_query(insert_query)
                         else:
@@ -564,8 +719,14 @@ async def post_tweets_for_single_user(user_id, posting_event):
             if tweets_posted_last_hour >= tweet_limit:
                 print(f"⛔ Usuario {user_id} alcanzó el límite mientras publicaba. Deteniendo la publicación.")
                 break
+            
+            media_rows = run_query(f"""
+                SELECT file_url FROM collected_media
+                WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}'
+            """, fetchall=True)
+            media_urls = [row[0] for row in media_rows] if media_rows else []
 
-            response, status_code = post_tweet(user_id, tweet_text)
+            response, status_code = post_tweet(user_id, tweet_text, media_urls=media_urls)
 
             if status_code == 200:
                 insert_query = f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ('{user_id}', '{tweet_text}', NOW())"
@@ -575,6 +736,9 @@ async def post_tweets_for_single_user(user_id, posting_event):
 
                 delete_query = f"DELETE FROM collected_tweets WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
                 run_query(delete_query)
+                delete_query2 = f"DELETE FROM collected_media WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
+                run_query(delete_query2)
+
                 print(f"🗑️ Tweet eliminado de collected_tweets después de ser publicado: {tweet_text[:50]}...")
 
                 tweets_posted_last_hour += 1 
@@ -938,3 +1102,63 @@ async def old_fetch_tweets_for_all_users(fetching_event):
         print("⏹️ Tareas canceladas por solicitud de detención.")
 
     print("✅ Búsqueda de tweets completada.")
+
+
+async def extract_from_drive_link(user_id, folder_id, drive_link):
+    drive_service = get_drive_service()
+    collected_count = 0
+    language = run_query(f"SELECT language FROM users WHERE id = '{user_id}'", fetchone=True)
+
+    results = drive_service.files().list(
+        q=f"'{folder_id}' in parents and trashed = false",
+        fields="files(id, name, mimeType, webViewLink)"
+    ).execute()
+    files = results.get("files", [])
+
+    grouped = {}
+    for file in files:
+        base_name = extract_base_name(file["name"])
+        grouped.setdefault(base_name, []).append(file)
+
+    for base_name, media_group in grouped.items():
+        check_query = (
+            f"SELECT 1 FROM drive_media_processed "
+            f"WHERE user_id = {user_id} AND base_name = '{base_name}' AND drive_link = '{drive_link}'"
+        )
+        exists = run_query(check_query, fetchone=True)
+
+        if exists:
+            print(f"⏭️ Ya procesado: {base_name}")
+            continue
+
+        prompt = f"Write a tweet based on the following topic: {base_name.replace('_', ' ')}"
+        tweet_text = generate_post_with_openai(prompt, language)
+        # tweet_text = 'Just look at that beautiful sky! Makes you want to get out there and enjoy the day.'
+
+        tweet_id = f"drive-{base_name}"
+        save_collected_tweet_simple(user_id, "drive", None, tweet_id, tweet_text, datetime.now(timezone.utc))
+
+        for file in media_group:
+            file_name = file['name'].replace("'", "''")
+            file_url = file['webViewLink'].replace("'", "''")
+
+            insert_media = (
+                f"INSERT INTO collected_media (tweet_id, user_id, file_name, file_url) "
+                f"VALUES ('{tweet_id}', {user_id}, '{file_name}', '{file_url}')"
+            )
+            run_query(insert_media)
+
+        insert_processed = (
+            f"INSERT INTO drive_media_processed (user_id, drive_link, base_name, created_at) "
+            f"VALUES ({user_id}, '{drive_link}', '{base_name}', NOW())"
+        )
+        run_query(insert_processed)
+
+        print(f"💾 Procesado y guardado: {base_name}")
+        collected_count += 1
+
+    return collected_count
+
+
+
+# JSON
