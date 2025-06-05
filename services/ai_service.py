@@ -248,41 +248,46 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     return False
 
 
-def verify_tweet_priority(tweet_id, user_id):
-    apikey = get_rapidapi_key()
-    session_token = run_query(f"SELECT session FROM users WHERE id = '{user_id}'", fetchone=True)
-    if not session_token:
-        print(f"❌ Can't find session for User ID: {user_id}")
-        return None
-
-    url = f"https://twttrapi.p.rapidapi.com/get-tweet?tweet_id={tweet_id}"
-    headers = {
-        'x-rapidapi-key': apikey,
-        'x-rapidapi-host': "twttrapi.p.rapidapi.com",
-        'twttr-session': session_token[0]
-    }
-
-    try:
-        response = requests.get(url, headers=headers)
-        log_usage("RAPIDAPI")
-
-        if response.status_code != 200:
-            print(f"❌ Error al obtener el tweet: {response.status_code}")
+def verify_tweet_priority(tweet_id, user_id, tweet_text, extraction_filter):
+    
+    if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
+        prioridad = 2
+        return prioridad
+    else:
+        apikey = get_rapidapi_key()
+        session_token = run_query(f"SELECT session FROM users WHERE id = '{user_id}'", fetchone=True)
+        if not session_token:
+            print(f"❌ Can't find session for User ID: {user_id}")
             return None
 
-        json_data = response.json()
-        legacy = json_data.get("data", {}).get("tweet_result", {}).get("result", {}).get("legacy", {})
+        url = f"https://twttrapi.p.rapidapi.com/get-tweet?tweet_id={tweet_id}"
+        headers = {
+            'x-rapidapi-key': apikey,
+            'x-rapidapi-host': "twttrapi.p.rapidapi.com",
+            'twttr-session': session_token[0]
+        }
 
-        favorite_count = legacy.get("favorite_count", 0)
-        retweet_count = legacy.get("retweet_count", 0)
+        try:
+            response = requests.get(url, headers=headers)
+            log_usage("RAPIDAPI")
 
-        prioridad = 1 if favorite_count > 0 or retweet_count > 0 else 2
-        print(f"📊 Tweet {tweet_id} — Likes: {favorite_count}, Retweets: {retweet_count} → Prioridad: {prioridad}")
-        return prioridad
+            if response.status_code != 200:
+                print(f"❌ Error al obtener el tweet: {response.status_code}")
+                return None
 
-    except Exception as e:
-        print(f"❌ Excepción al procesar el tweet {tweet_id}: {e}")
-        return None
+            json_data = response.json()
+            legacy = json_data.get("data", {}).get("tweet_result", {}).get("result", {}).get("legacy", {})
+
+            favorite_count = legacy.get("favorite_count", 0)
+            retweet_count = legacy.get("retweet_count", 0)
+
+            prioridad = 1 if favorite_count > 0 or retweet_count > 0 else 2
+            print(f"📊 Tweet {tweet_id} — Likes: {favorite_count}, Retweets: {retweet_count} → Prioridad: {prioridad}")
+            return prioridad
+
+        except Exception as e:
+            print(f"❌ Excepción al procesar el tweet {tweet_id}: {e}")
+            return None
     
     
 def save_collected_tweet_simple(user_id, source_type, source_value, tweet_id, tweet_text, created_at):
@@ -350,7 +355,7 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
     if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
         pass
     else:
-        priority = verify_tweet_priority(tweet_id, user_id)
+        priority = verify_tweet_priority(tweet_id, user_id, tweet_text, extraction_filter)
             
         insert_query = f"""
         INSERT INTO collected_tweets (user_id, source_type, source_value, tweet_id, tweet_text, created_at)
