@@ -59,7 +59,6 @@ def translate_text_with_openai(text, target_language, custom_style):
                     {"role": "system", "content": "Eres un traductor experto."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=100,
                 temperature=0.5
             )
             log_usage("OPENROUTER")
@@ -114,7 +113,6 @@ def generate_post_with_openai(tweet_text, target_language):
                     {"role": "system", "content": "You are a helpful assistant who replies to tweets in a smart and social way."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=40,
                 temperature=0.7
             )
             log_usage("OPENROUTER")
@@ -168,7 +166,6 @@ def generate_reply_with_openai(tweet_text, target_language):
                     {"role": "system", "content": "You are a helpful assistant who replies to tweets in a smart and social way."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=80,
                 temperature=0.7
             )
             log_usage("OPENROUTER")
