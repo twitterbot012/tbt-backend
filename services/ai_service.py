@@ -39,7 +39,8 @@ def translate_text_with_openai(text, target_language, custom_style):
     If you touch even one link or hashtag, your reply will be discarded.
     Simple: links and hashtags stay exactly as they are.
     Also remember, always translate to: {target_language} and NEVER add a text that is not a translation 
-    of the original text example."""
+    of the original text example.
+    And if the language is already in {target_language}, just give me the original tweet text without aditional text."""
 
     models_to_try = [
         "meta-llama/llama-4-scout:free",
