@@ -726,7 +726,11 @@ async def post_tweets_for_single_user(user_id, posting_event):
             """, fetchall=True)
             media_urls = [row[0] for row in media_rows] if media_rows else []
 
-            response, status_code = post_tweet(user_id, tweet_text, media_urls=media_urls)
+            extraction_filter = get_extraction_filter(user_id)
+            if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
+                print(f"❌ No se publico el tweet.")
+            else:
+                response, status_code = post_tweet(user_id, tweet_text, media_urls=media_urls)
 
             if status_code == 200:
                 insert_query = f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ('{user_id}', '{tweet_text}', NOW())"

@@ -247,7 +247,12 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
 
 
 def verify_tweet_priority(tweet_id, user_id, tweet_text, extraction_filter):
+    print(f'{extraction_filter} extration filter 1:2')
+    print(f'{tweet_text} tweet_text 1:2')
     
+    if "https://" in tweet_text:
+        print(f'{tweet_text}')
+
     if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
         prioridad = 2
         return prioridad
