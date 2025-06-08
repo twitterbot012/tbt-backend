@@ -44,15 +44,19 @@ def refresh_user_profile(twitter_id):
     if not API_KEY:
         return jsonify({"error": "API Key no configurada"}), 500
 
+    query = f"SELECT username FROM users WHERE twitter_id = {twitter_id}"
+    result = run_query(query, fetchone=True)
+    username = result[0] if result else None  
+
     try:
         headers = {
             "Authorization": f"Bearer {API_KEY}",
             "Accept": "application/json"
         }
-        url = f"https://api.socialdata.tools/twitter/user/{twitter_id}"
+        url = f"https://api.socialdata.tools/twitter/user/{username}"
         response = requests.get(url, headers=headers)
         log_usage("SOCIALDATA")
-
+        print(f'response refresh {response.text}')
         if response.status_code == 402:
             return jsonify({"error": "Créditos insuficientes para la API"}), 402
         if response.status_code == 404:
