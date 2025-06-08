@@ -732,23 +732,23 @@ async def post_tweets_for_single_user(user_id, posting_event):
             else:
                 response, status_code = post_tweet(user_id, tweet_text, media_urls=media_urls)
 
-            if status_code == 200:
-                insert_query = f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ('{user_id}', '{tweet_text}', NOW())"
-                run_query(insert_query)
+                if status_code == 200:
+                    insert_query = f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ('{user_id}', '{tweet_text}', NOW())"
+                    run_query(insert_query)
 
-                print(f"✅ Tweet publicado y guardado en posted_tweets: {tweet_text[:50]}...")
+                    print(f"✅ Tweet publicado y guardado en posted_tweets: {tweet_text[:50]}...")
 
-                delete_query = f"DELETE FROM collected_tweets WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
-                run_query(delete_query)
-                delete_query2 = f"DELETE FROM collected_media WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
-                run_query(delete_query2)
+                    delete_query = f"DELETE FROM collected_tweets WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
+                    run_query(delete_query)
+                    delete_query2 = f"DELETE FROM collected_media WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
+                    run_query(delete_query2)
 
-                print(f"🗑️ Tweet eliminado de collected_tweets después de ser publicado: {tweet_text[:50]}...")
+                    print(f"🗑️ Tweet eliminado de collected_tweets después de ser publicado: {tweet_text[:50]}...")
 
-                tweets_posted_last_hour += 1 
+                    tweets_posted_last_hour += 1 
 
-            else:
-                print(f"❌ No se pudo publicar el tweet: {response.get('error')}")
+                else:
+                    print(f"❌ No se pudo publicar el tweet: {response.get('error')}")
 
             await asyncio.sleep(0.1)
 
