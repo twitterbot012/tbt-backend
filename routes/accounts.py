@@ -44,7 +44,7 @@ def refresh_user_profile(twitter_id):
     if not API_KEY:
         return jsonify({"error": "API Key no configurada"}), 500
 
-    query = f"SELECT username FROM users WHERE twitter_id = {twitter_id}"
+    query = f"SELECT username FROM users WHERE twitter_id = '{twitter_id}'"
     result = run_query(query, fetchone=True)
     username = result[0] if result else None  
 
