@@ -17,3 +17,4 @@ resend
 google-api-python-client 
 google-auth
 pytz
+langdetect

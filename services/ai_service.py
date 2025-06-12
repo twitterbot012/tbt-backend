@@ -6,6 +6,25 @@ from datetime import datetime, timedelta
 from services.db_service import run_query
 from routes.logs import log_usage
 import requests
+from langdetect import detect, DetectorFactory
+
+DetectorFactory.seed = 0
+
+LANG_NAME_TO_CODE = {
+    "afrikaans": "af", "albanian": "sq", "arabic": "ar", "armenian": "hy", "azerbaijani": "az", "basque": "eu",
+    "belarusian": "be", "bengali": "bn", "bosnian": "bs", "bulgarian": "bg", "catalan": "ca", "chinese": "zh",
+    "chinese simplified": "zh-cn", "chinese traditional": "zh-tw", "croatian": "hr", "czech": "cs", "danish": "da",
+    "dutch": "nl", "english": "en", "estonian": "et", "filipino": "fil", "finnish": "fi", "french": "fr",
+    "galician": "gl", "georgian": "ka", "german": "de", "greek": "el", "gujarati": "gu", "haitian creole": "ht",
+    "hebrew": "he", "hindi": "hi", "hungarian": "hu", "icelandic": "is", "indonesian": "id", "irish": "ga", "italian": "it",
+    "japanese": "ja", "kannada": "kn", "kazakh": "kk", "khmer": "km", "korean": "ko", "kyrgyz": "ky", "lao": "lo",
+    "latin": "la", "latvian": "lv", "lithuanian": "lt", "macedonian": "mk", "malay": "ms", "malayalam": "ml",
+    "maltese": "mt", "marathi": "mr", "mongolian": "mn", "nepali": "ne", "norwegian": "no", "persian": "fa",
+    "polish": "pl", "portuguese": "pt", "punjabi": "pa", "romanian": "ro", "russian": "ru", "serbian": "sr",
+    "slovak": "sk", "slovenian": "sl", "somali": "so", "spanish": "es", "sundanese": "su", "swahili": "sw",
+    "swedish": "sv", "tamil": "ta", "telugu": "te", "thai": "th", "turkish": "tr", "ukrainian": "uk",
+    "urdu": "ur", "uzbek": "uz", "vietnamese": "vi", "welsh": "cy", "yoruba": "yo", "zulu": "zu"
+}
 
 
 def get_openai_api_key():
@@ -311,6 +330,20 @@ def save_collected_tweet_simple(user_id, source_type, source_value, tweet_id, tw
     """
     run_query(insert_query)
     print(f"✅ Tweet {tweet_id} guardado correctamente (modo simple).")
+    
+
+def normalize_target_code(target_language: str) -> str:
+    key = target_language.strip().lower()
+    return LANG_NAME_TO_CODE.get(key, key[:2])
+
+
+def is_text_in_language(text: str, target_language: str) -> bool:
+    target_code = normalize_target_code(target_language)
+    try:
+        detected = detect(text)  
+        return detected == target_code
+    except Exception:
+        return False
 
 
 def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_text, created_at, extraction_filter):
@@ -347,18 +380,22 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
 
     target_language = user_language[0]
     custom_style = f'Custom Style: {user_language[1]}' if user_language[1] else ''
-
-    translated_text = translate_text_with_openai(tweet_text, target_language, custom_style)
-    if not translated_text:
-        print(f"❌ No se pudo traducir el tweet {tweet_id}. No se guardará.")
-        return
-
-    print(f"🌐 Tweet traducido al idioma '{target_language}': {translated_text}")
     
-    if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
+    if is_text_in_language(tweet_text, target_language):
+        print(f"✅ El tweet ya está en “{target_language}”, no se traduce.")
+        translated_text = tweet_text
+    else:
+        translated_text = translate_text_with_openai(tweet_text, target_language, custom_style)
+        if not translated_text:
+            print(f"❌ No se pudo traducir el tweet {tweet_id}. No se guardará.")
+            return
+
+        print(f"🌐 Tweet traducido al idioma '{target_language}': {translated_text}")
+    
+    if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in translated_text:
         pass
     else:
-        priority = verify_tweet_priority(tweet_id, user_id, tweet_text, extraction_filter)
+        priority = verify_tweet_priority(tweet_id, user_id, translated_text, extraction_filter)
             
         insert_query = f"""
         INSERT INTO collected_tweets (user_id, source_type, source_value, tweet_id, tweet_text, created_at)
