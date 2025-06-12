@@ -100,9 +100,7 @@ def delete_from_supabase(path):
 
 def post_tweet(user_id, tweet_text, media_urls=None):
     extraction_filter = get_extraction_filter(user_id)
-    if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
-        pass
-    else:
+    if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" in tweet_text:
         result = run_query(f"SELECT session FROM users WHERE id = {user_id}", fetchone=True)
         if not result:
             return {"error": "Usuario no encontrado"}, 404
