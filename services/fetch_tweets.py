@@ -19,7 +19,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "service_account.json")
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-
 def get_drive_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE, scopes=SCOPES)
