@@ -2,7 +2,6 @@ import asyncio
 import aiohttp
 from services.db_service import run_query, log_event
 from services.ai_service import save_collected_tweet, generate_reply_with_openai, generate_post_with_openai, save_collected_tweet_simple
-from config import Config
 from datetime import datetime, timezone
 from services.post_tweets import post_tweet
 import time
@@ -12,16 +11,32 @@ import re
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 import os
+import json
+import tempfile
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, "service_account.json")
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
+
+def get_google_json():
+    query = "SELECT json FROM api_keys WHERE id = 4"  
+    result = run_query(query, fetchone=True)
+    return result[0] if result else None 
+
+
 def get_drive_service():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    json_string = get_google_json()
+    if not json_string:
+        raise ValueError("❌ No se encontró la clave del Service Account en la base de datos.")
+
+    credentials_data = json.loads(json_string)
+
+    creds = service_account.Credentials.from_service_account_info(
+        credentials_data,
+        scopes=SCOPES
+    )
+
     return build("drive", "v3", credentials=creds)
 
 
@@ -561,24 +576,28 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
 
         query = f"from:{username} since_time:{since_timestamp}"
         params = {"query": query, "type": "Latest"}
-        headers_sd = {"Authorization": f"Bearer {get_socialdata_api_key()}"}
+        headers_rapid = {
+            "x-rapidapi-key": rapidkey,
+            "x-rapidapi-host": "twitter-api45.p.rapidapi.com",
+        }
+        search_url = "https://twitter-api45.p.rapidapi.com/search.php"
 
-        async with session.get(SOCIALDATA_API_URL, headers=headers_sd, params=params) as response:
+        async with session.get(search_url, headers=headers_rapid, params=params) as response:
             if response.status != 200:
                 print(f"❌ Error al buscar tweets para {username} ({response.status})")
-                log_usage("SOCIALDATA", count=1) 
+                log_usage("RAPIDAPI", count=1) 
                 continue
 
             try:
                 data = await response.json()
-                tweets = data.get("tweets", [])
-                log_usage("SOCIALDATA", count=len(tweets))
+                tweets = data.get("timeline", [])
+                log_usage("RAPIDAPI", count=len(tweets))
                 if not tweets:
                     print(f"⚠️ No se encontraron tweets para {username}")
                     continue
             except Exception as e:
-                print(f"❌ Error parseando respuesta de SocialData: {e}")
-                log_usage("SOCIALDATA", count=1) 
+                print(f"❌ Error parseando respuesta de RapidApi Search: {e}")
+                log_usage("RAPIDAPI", count=1) 
                 continue
 
             for tweet in tweets[:10]:
@@ -820,152 +839,6 @@ async def post_tweets_for_user(session, user_id, tweets, posting_event, tweet_li
     
 #         print("⏳ Esperando 5 minutos antes de la próxima búsqueda...")
 #         await asyncio.sleep(300)  
-
-
-# async def fetch_tweets_for_user(session, user_id, username, limit, fetching_event):
-#     """
-#     Función asíncrona para buscar tweets de un usuario monitoreado.
-#     Se detiene si el evento fetching_event está activado.
-#     """
-#     if fetching_event.is_set():
-#         print(f"⏹️ Proceso detenido para usuario monitoreado: {username}.")
-#         return
-
-#     tweets_collected_today = await count_tweets_for_user(user_id)
-#     if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-#         print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets por hora. Saltando usuario {username}.")
-#         return
-
-#     print(f"📡 Buscando tweets de usuario monitoreado: {username}")
-#     headers = {"Authorization": f"Bearer {Config.SOCIALDATA_API_KEY}"}
-#     params = {"query": f"from:{username}", "type": "Latest"}
-
-#     try:
-#         async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
-#             data = await response.json()
-#             tweets = data.get("tweets", [])[:limit]
-#             print(data)
-#             for tweet in tweets:
-#                 if fetching_event.is_set():
-#                     print(f"⏹️ Proceso detenido mientras se procesaban tweets de {username}.")
-#                     break
-
-#                 tweet_id = tweet["id_str"]
-#                 tweet_text = tweet["full_text"]
-#                 created_at = tweet["tweet_created_at"]
-
-#                 print(f"✅ Nuevo tweet de {username}: {tweet_text[:50]}...")
-#                 save_collected_tweet(user_id, "username", username, tweet_id, tweet_text, created_at)
-#                 print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
-
-#                 await asyncio.sleep(0.1)
-
-#     except Exception as e:
-#         log_event(user_id, "ERROR", f"Error obteniendo tweets de {username}: {str(e)}")
-#         print(f"❌ Error con {username}: {e}")
-        
-        
-# async def fetch_tweets_for_keyword(session, user_id, keyword, limit, fetching_event):
-#     if fetching_event.is_set():
-#         print(f"⏹️ Proceso detenido para keyword: {keyword}.")
-#         return
-
-#     tweets_collected_today = await count_tweets_for_user(user_id)
-#     if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-#         print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets hoy. Saltando keyword {keyword}.")
-#         return
-
-#     print(f"🔍 Buscando tweets con keyword: {keyword}")
-#     headers = {"Authorization": f"Bearer {Config.SOCIALDATA_API_KEY}"}
-#     params = {"query": keyword, "type": "Latest"}
-
-#     try:
-#         async with session.get(SOCIALDATA_API_URL, headers=headers, params=params) as response:
-#             data = await response.json()
-#             tweets = data.get("tweets", [])[:limit]
-
-#             for tweet in tweets:
-#                 if fetching_event.is_set():
-#                     print(f"⏹️ Proceso detenido mientras se procesaban tweets con keyword: {keyword}.")
-#                     break
-
-#                 tweets_collected_today = await count_tweets_for_user(user_id)
-#                 if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-#                     print(f"⛔ Usuario {user_id} alcanzó el límite mientras recolectaba. Deteniendo keyword {keyword}.")
-#                     break
-
-#                 tweet_id = tweet["id_str"]
-#                 tweet_text = tweet["full_text"]
-#                 created_at = tweet["tweet_created_at"]
-
-#                 print(f"✅ Nuevo tweet con keyword '{keyword}': {tweet_text[:50]}...")
-#                 save_collected_tweet(user_id, "keyword", keyword, tweet_id, tweet_text, created_at)
-#                 print(f"💾 Tweet guardado en la base de datos: {tweet_id}")
-
-#                 await asyncio.sleep(0.1)
-
-#     except Exception as e:
-#         log_event(user_id, "ERROR", f"Error obteniendo tweets con la keyword '{keyword}': {str(e)}")
-#         print(f"❌ Error con la keyword '{keyword}': {e}")
-
-# async def fetch_tweets_for_single_user(user_id, fetching_event):
-#     """
-#     Función asíncrona para buscar tweets para un solo usuario.
-#     Se detiene si el evento fetching_event está activado.
-#     """
-#     print(f"🔍 Iniciando búsqueda de tweets para usuario ID: {user_id}...")
-
-#     # Verificar si el proceso debe detenerse
-#     if fetching_event.is_set():
-#         print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
-#         return
-
-#     # Contar tweets recolectados hoy
-#     tweets_collected_today = await count_tweets_for_user(user_id)
-#     print(tweets_collected_today)
-
-#     if tweets_collected_today >= TWEET_LIMIT_PER_HOUR:
-#         print(f"⛔ Usuario {user_id} alcanzó el límite de {TWEET_LIMIT_PER_HOUR} tweets hoy. Saltando completamente la búsqueda.")
-#         return
-
-#     # Crear una sesión HTTP
-#     async with aiohttp.ClientSession() as session:
-#         # Consultar usuarios monitoreados
-#         query_users = f"SELECT DISTINCT twitter_username FROM monitored_users WHERE user_id = '{user_id}'"
-#         monitored_users = run_query(query_users, fetchall=True) or []
-#         print(monitored_users)
-
-#         # Consultar keywords monitoreadas
-#         query_keywords = f"SELECT DISTINCT keyword FROM user_keywords WHERE user_id = '{user_id}'"
-#         monitored_keywords = run_query(query_keywords, fetchall=True) or []
-#         print(monitored_keywords)
-
-#         # Si no hay usuarios ni keywords monitoreadas, salir
-#         if not monitored_users and not monitored_keywords:
-#             print(f"⚠ Usuario {user_id} no tiene usuarios o keywords monitoreadas.")
-#             return
-
-#         # Calcular límites
-#         user_limit = 11 if len(monitored_users) > 3 else TWEET_LIMIT_PER_HOUR
-#         keyword_limit = 11 if len(monitored_keywords) > 3 else TWEET_LIMIT_PER_HOUR
-
-#         # Crear tareas para buscar tweets
-#         user_tasks = [
-#             fetch_tweets_for_user(session, user_id, username[0], user_limit, fetching_event)
-#             for username in monitored_users
-#         ]
-#         keyword_tasks = [
-#             fetch_tweets_for_keyword(session, user_id, keyword[0], keyword_limit, fetching_event)
-#             for keyword in monitored_keywords
-#         ]
-
-#         # Ejecutar todas las tareas
-#         try:
-#             await asyncio.gather(*user_tasks, *keyword_tasks)
-#         except asyncio.CancelledError:
-#             print(f"⏹️ Tareas canceladas para usuario ID: {user_id}.")
-
-#     print(f"✅ Búsqueda de tweets completada para usuario ID: {user_id}.")
 
 
 
