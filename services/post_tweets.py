@@ -99,6 +99,10 @@ def delete_from_supabase(path):
 
 
 def post_tweet(user_id, tweet_text, media_urls=None):
+    if len(tweet_text) > 270:
+        print(f"⚠️ Tweet demasiado largo ({len(tweet_text)} caracteres). Se salta publicación.")
+        return {"error": "El tweet supera el límite de 270 caracteres y fue descartado."}, 400
+
     extraction_filter = get_extraction_filter(user_id)
     if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" in tweet_text:
         result = run_query(f"SELECT session FROM users WHERE id = {user_id}", fetchone=True)
