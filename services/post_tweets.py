@@ -171,9 +171,14 @@ def post_tweet(user_id, tweet_text, media_urls=None):
         log_usage("RAPIDAPI")
         
         if tweet_resp.status_code == 200 and "data" in tweet_resp.json():
-            tweet_data = tweet_resp.json()["data"]["create_tweet"]["tweet_result"]["result"]
-            tweet_id = tweet_data["rest_id"]
-            tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
-            run_query(f"UPDATE posted_tweets SET tweet_id = '{tweet_id}' WHERE id = {internal_id}")
-            return {"message": "Tweet publicado exitosamente", "tweet_id": tweet_id, "tweet_url": tweet_url}, 200
+            try:
+                tweet_data = tweet_resp.json()["data"]["create_tweet"]["tweet_result"]["result"]
+                tweet_id = tweet_data["rest_id"]
+                tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
+                run_query(f"UPDATE posted_tweets SET tweet_id = '{tweet_id}' WHERE id = {internal_id}")
+                return {"message": "Tweet publicado exitosamente", "tweet_id": tweet_id, "tweet_url": tweet_url}, 200
+
+            except KeyError as e:
+                print("❌ Error al parsear respuesta del tweet:", tweet_resp.json())
+                return {"error": f"Respuesta inesperada al crear tweet: {e}"}, 500
         return {"error": "No se pudo publicar el tweet"}, tweet_resp.status_code
