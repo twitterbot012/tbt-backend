@@ -286,10 +286,15 @@ def update_user_profile(twitter_id):
 @accounts_bp.route("/accounts", methods=["GET"])
 def get_accounts():
     query = """
-        SELECT u.id, u.twitter_id, u.username, u.profile_pic, u.followers, u.following, u.rate_limit,
-               COUNT(ct.id) AS collected_tweets_count
+        SELECT 
+            u.id, u.twitter_id, u.username, u.profile_pic, u.followers, u.following, u.rate_limit,
+            COUNT(ct.id) AS collected_tweets_count,
+            MAX(l.created_at) FILTER (WHERE l.event_type = 'EXTRACT') AS last_extract,
+            MAX(pt.created_at) AS last_post
         FROM users u
         LEFT JOIN collected_tweets ct ON u.id = ct.user_id
+        LEFT JOIN logs l ON u.id = l.user_id
+        LEFT JOIN posted_tweets pt ON u.id = pt.user_id
         GROUP BY u.id, u.twitter_id, u.username, u.profile_pic, u.followers, u.following, u.rate_limit
     """
     accounts = run_query(query, fetchall=True)
@@ -305,7 +310,9 @@ def get_accounts():
         "followers": acc[4],
         "following": acc[5],
         "rate_limit": acc[6],
-        "collected_tweets": acc[7]
+        "collected_tweets": acc[7],
+        "last_extract": acc[8].isoformat() if acc[8] else None,
+        "last_post": acc[9].isoformat() if acc[9] else None
     } for acc in accounts]
 
     return jsonify(accounts_list), 200
