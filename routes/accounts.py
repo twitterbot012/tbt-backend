@@ -286,14 +286,21 @@ def update_user_profile(twitter_id):
 @accounts_bp.route("/accounts", methods=["GET"])
 def get_accounts():
     query = """
-        SELECT 
-            u.id, u.twitter_id, u.username, u.profile_pic, u.followers, u.following, u.rate_limit,
-            COUNT(ct.id) AS collected_tweets_count,
-            MAX(pt.created_at) AS last_post
-        FROM users u
-        LEFT JOIN collected_tweets ct ON u.id = ct.user_id
-        LEFT JOIN posted_tweets pt ON u.id = pt.user_id
-        GROUP BY u.id, u.twitter_id, u.username, u.profile_pic, u.followers, u.following, u.rate_limit
+            SELECT 
+                u.id, u.twitter_id, u.username, u.profile_pic, u.followers, u.following, u.rate_limit,
+                COALESCE(ct.collected_count, 0) AS collected_tweets,
+                COALESCE(pt.last_post, NULL) AS last_post
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS collected_count
+                FROM collected_tweets
+                GROUP BY user_id
+            ) ct ON u.id = ct.user_id
+            LEFT JOIN (
+                SELECT user_id, MAX(created_at) AS last_post
+                FROM posted_tweets
+                GROUP BY user_id
+            ) pt ON u.id = pt.user_id
     """
     accounts = run_query(query, fetchall=True)
 
