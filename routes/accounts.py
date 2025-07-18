@@ -304,7 +304,7 @@ def get_accounts():
             ) pt ON u.id = pt.user_id
             LEFT JOIN (
                 SELECT user_id, MAX(timestamp) AS last_extract
-                FROM user_events
+                FROM logs
                 WHERE event_type = 'EXTRACT'
                 GROUP BY user_id
             ) le ON u.id = le.user_id
@@ -326,6 +326,7 @@ def get_accounts():
         "last_post": acc[8].isoformat() if acc[8] else None,
         "last_extract": acc[9].isoformat() if acc[9] else None
     } for acc in accounts]
+    print(accounts_list)
 
     return jsonify(accounts_list), 200
 
