@@ -417,6 +417,15 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
         run_query(update_query)
 
         print(f"✅ Tweet {tweet_id} priorizado correctamente.")
+        
+        event_description = f"Extracted tweet {tweet_id} using filter '{extraction_filter}'"
+        event_query = f"""
+        INSERT INTO logs (user_id, event_type, event_description, timestamp)
+        VALUES ({user_id}, 'EXTRACT', '{event_description.replace("'", "''")}', NOW())
+        """
+        run_query(event_query)
+        print(f"📝 Evento EXTRACT guardado para tweet {tweet_id}.")
+
 
 
 # def translate_text_with_openai(text, target_language, custom_style):

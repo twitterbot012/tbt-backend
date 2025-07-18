@@ -289,7 +289,8 @@ def get_accounts():
             SELECT 
                 u.id, u.twitter_id, u.username, u.profile_pic, u.followers, u.following, u.rate_limit,
                 COALESCE(ct.collected_count, 0) AS collected_tweets,
-                COALESCE(pt.last_post, NULL) AS last_post
+                COALESCE(pt.last_post, NULL) AS last_post,
+                COALESCE(le.last_extract, NULL) AS last_extract
             FROM users u
             LEFT JOIN (
                 SELECT user_id, COUNT(*) AS collected_count
@@ -301,6 +302,12 @@ def get_accounts():
                 FROM posted_tweets
                 GROUP BY user_id
             ) pt ON u.id = pt.user_id
+            LEFT JOIN (
+                SELECT user_id, MAX(timestamp) AS last_extract
+                FROM user_events
+                WHERE event_type = 'EXTRACT'
+                GROUP BY user_id
+            ) le ON u.id = le.user_id
     """
     accounts = run_query(query, fetchall=True)
 
@@ -316,7 +323,8 @@ def get_accounts():
         "following": acc[5],
         "rate_limit": acc[6],
         "collected_tweets": acc[7],
-        "last_post": acc[8].isoformat() if acc[8] else None
+        "last_post": acc[8].isoformat() if acc[8] else None,
+        "last_extract": acc[9].isoformat() if acc[9] else None
     } for acc in accounts]
 
     return jsonify(accounts_list), 200
