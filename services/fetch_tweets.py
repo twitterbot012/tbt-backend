@@ -609,8 +609,8 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
                     print(f"✅ Límite alcanzado ({limit}) para acción '{action_type}'")
                     return
 
-                tweet_id = tweet.get("id_str")
-                tweet_text = tweet.get("full_text", "")
+                tweet_id = tweet.get("tweet_id")
+                tweet_text = tweet.get("text", "")
 
                 check_query = f"SELECT 1 FROM random_actions WHERE twitter_id = '{tweet_id}'"
                 already_done = run_query(check_query, fetchone=True)
