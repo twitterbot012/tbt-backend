@@ -62,7 +62,7 @@ def translate_text_with_openai(text, target_language, custom_style):
     And if the language is already in {target_language}, just give me the original tweet text without aditional text."""
 
     models_to_try = [
-        "meta-llama/llama-4-scout:free",
+        "x-ai/grok-4",
         "google/gemini-2.0-flash-001",                 
         "deepseek/deepseek-chat-v3-0324",
         "openai/gpt-4o-2024-11-20",
@@ -116,7 +116,7 @@ def generate_post_with_openai(tweet_text, target_language):
     )
 
     models_to_try = [
-        "meta-llama/llama-4-scout:free",
+        "x-ai/grok-4",
         "google/gemini-2.0-flash-001",
         "deepseek/deepseek-chat-v3-0324",
         "openai/gpt-4o-2024-11-20",
@@ -169,7 +169,7 @@ def generate_reply_with_openai(tweet_text, target_language):
     )
 
     models_to_try = [
-        "meta-llama/llama-4-scout:free",
+        "x-ai/grok-4",
         "google/gemini-2.0-flash-001",
         "deepseek/deepseek-chat-v3-0324",
         "openai/gpt-4o-2024-11-20",
@@ -231,7 +231,7 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     """
 
     models_to_try = [
-        "meta-llama/llama-4-scout:free",
+        "x-ai/grok-4",
         "google/gemini-2.0-flash-001",
         "deepseek/deepseek-chat-v3-0324",
         "openai/gpt-4o-2024-11-20",
