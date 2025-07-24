@@ -372,6 +372,8 @@ async def fetch_tweets_for_all_users(fetching_event):
     if not users:
         print("⚠ No hay usuarios registrados en la base de datos.")
         return
+    
+    users = [u for u in users if u and isinstance(u, (list, tuple)) and len(u) > 0 and u[0] is not None]
 
     tasks = []
     for user_id in users:
@@ -402,6 +404,8 @@ async def fetch_random_tasks_for_all_users(fetching_event):
     if not users:
         print("⚠ No hay usuarios en la base de datos.")
         return
+    
+    users = [u for u in users if u and isinstance(u, (list, tuple)) and len(u) > 0 and u[0] is not None]
 
     tasks = []
     for user in users:
@@ -693,6 +697,8 @@ async def post_tweets_for_all_users(posting_event):
     if not users:
         print("⚠ No hay usuarios registrados en la base de datos.")
         return
+    
+    users = [u for u in users if u and isinstance(u, (list, tuple)) and len(u) > 0 and u[0] is not None]
 
     tasks = []
     for user_id in users:

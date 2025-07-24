@@ -231,7 +231,6 @@ def is_duplicate_tweet(tweet_text, recent_texts, api_key):
     """
 
     models_to_try = [
-        "x-ai/grok-4",
         "google/gemini-2.0-flash-001",
         "deepseek/deepseek-chat-v3-0324",
         "openai/gpt-4o-2024-11-20",
