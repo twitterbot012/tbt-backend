@@ -455,225 +455,227 @@ async def fetch_random_tasks_for_user(user_id, fetching_event):
 
 
 async def run_random_actions(session, user_id, usernames, action_type, limit, session_token, fetching_event, language=None):
-    if not usernames:
-        print(f"⚠️ Sin usuarios configurados para acción {action_type} en user ID {user_id}")
-        return
-
-    rapidkey = get_rapidapi_key()
-
-    print(f"🎯 Ejecutando '{action_type}' para user ID {user_id}... (límite: {limit})")
-    since_timestamp = int(time.time()) - 4 * 60 * 60
-    count = 0
-    
-    if action_type == "follow":
-        check_follows_last_hour = run_query(
-            f"""
-            SELECT COUNT(*) FROM random_actions
-            WHERE user_id = '{user_id}' AND action_type = 'follow'
-            AND created_at >= NOW() - INTERVAL '1 hour'
-            """,
-            fetchone=True
-        )
-        count = check_follows_last_hour[0] if check_follows_last_hour else 0
-
-        if count >= limit:
-            print(f"⛔ Usuario {user_id} ya alcanzó el límite de follows ({limit}) en la última hora.")
+    try:
+        if not usernames:
+            print(f"⚠️ Sin usuarios configurados para acción {action_type} en user ID {user_id}")
             return
 
-        min_followers = 100
+        rapidkey = get_rapidapi_key()
 
-        for target_username in usernames:
-            if fetching_event.is_set():
+        print(f"🎯 Ejecutando '{action_type}' para user ID {user_id}... (límite: {limit})")
+        since_timestamp = int(time.time()) - 4 * 60 * 60
+        count = 0
+        
+        if action_type == "follow":
+            check_follows_last_hour = run_query(
+                f"""
+                SELECT COUNT(*) FROM random_actions
+                WHERE user_id = '{user_id}' AND action_type = 'follow'
+                AND created_at >= NOW() - INTERVAL '1 hour'
+                """,
+                fetchone=True
+            )
+            count = check_follows_last_hour[0] if check_follows_last_hour else 0
+
+            if count >= limit:
+                print(f"⛔ Usuario {user_id} ya alcanzó el límite de follows ({limit}) en la última hora.")
                 return
 
-            url = f"https://twttrapi.p.rapidapi.com/user-followers?username={target_username}&count=20"
-            headers_followers = {
-                'x-rapidapi-key': rapidkey,
-                'x-rapidapi-host': "twttrapi.p.rapidapi.com"
-            }
+            min_followers = 100
 
-            try:
-                async with session.get(url, headers=headers_followers) as resp:
-                    if resp.status != 200:
-                        print(f"❌ Error al obtener followers de @{target_username} ({resp.status})")
-                        log_usage("RAPIDAPI")
-                        continue
-
-                    data = await resp.json()
-                    followers = []
-                    instructions = data.get("data", {}).get("user", {}).get("timeline_response", {}).get("timeline", {}).get("instructions", [])
-
-                    for instruction in instructions:
-                        if instruction.get("__typename") == "TimelineAddEntries":
-                            for entry in instruction.get("entries", []):
-                                try:
-                                    user_result = entry["content"]["content"]["userResult"]["result"]
-                                    followers.append(user_result)
-                                except KeyError:
-                                    continue
-                    
-                    log_usage("RAPIDAPI", count=len(followers))
-                    
-                    for user in followers:
-                        if fetching_event.is_set():
-                            return
-
-                        if count >= limit:
-                            print(f"✅ Límite alcanzado ({limit}) para acción 'follow'")
-                            return
-
-                        legacy = user.get("legacy", {})
-                        verified = user.get("is_blue_verified", False)
-                        followers_count = legacy.get("followers_count", 0)
-                        username_to_follow = legacy.get("screen_name") or user.get("screen_name")
-                        print(f'{username_to_follow} {followers_count} {verified}')
-                        if not username_to_follow or not verified or followers_count < min_followers:
-                            continue
-
-                        already_followed = run_query(
-                            f"SELECT 1 FROM random_actions WHERE twitter_id = '{username_to_follow}' AND action_type = 'follow'",
-                            fetchone=True
-                        )
-                        if already_followed:
-                            continue
-
-                        url_follow = "https://twttrapi.p.rapidapi.com/follow-user"
-                        payload = f"username={username_to_follow}"
-                        headers_follow = {
-                            'x-rapidapi-key': rapidkey,
-                            'x-rapidapi-host': "twttrapi.p.rapidapi.com",
-                            'Content-Type': "application/x-www-form-urlencoded",
-                            'twttr-session': session_token
-                        }
-
-                        try:
-                            async with session.post(url_follow, data=payload, headers=headers_follow) as follow_resp:
-                                log_usage("RAPIDAPI")
-                                if follow_resp.status == 200:
-                                    print(f"✅ Seguido @{username_to_follow} ({followers_count} seguidores)")
-                                    run_query(f"""
-                                        INSERT INTO random_actions (user_id, twitter_id, action_type, created_at)
-                                        VALUES ('{user_id}', '{username_to_follow}', 'follow', NOW())
-                                    """)
-                                    count += 1
-                                else:
-                                    print(f"❌ Error al seguir @{username_to_follow} ({follow_resp.status})")
-                        except Exception as e:
-                            print(f"❌ Excepción al seguir a @{username_to_follow}: {e}")
-
-                        await asyncio.sleep(0.2)
-
-            except Exception as e:
-                print(f"❌ Error general al obtener followers de @{target_username}: {e}")
-
-        return
-
-    for username in usernames:
-        if fetching_event.is_set():
-            print(f"⏹️ Proceso detenido en acción '{action_type}' para user ID {user_id}")
-            return
-
-        if count >= limit:
-            print(f"✅ Límite alcanzado ({limit}) para acción '{action_type}'")
-            return
-        
-
-        query = f"from:{username} since_time:{since_timestamp}"
-        params = {"query": query, "type": "Latest"}
-        headers_rapid = {
-            "x-rapidapi-key": rapidkey,
-            "x-rapidapi-host": "twitter-api45.p.rapidapi.com",
-        }
-        search_url = "https://twitter-api45.p.rapidapi.com/search.php"
-
-        async with session.get(search_url, headers=headers_rapid, params=params) as response:
-            if response.status != 200:
-                print(f"❌ Error al buscar tweets para {username} ({response.status})")
-                log_usage("RAPIDAPI", count=1) 
-                continue
-
-            try:
-                data = await response.json()
-                tweets = data.get("timeline", [])
-                log_usage("RAPIDAPI", count=len(tweets))
-                if not tweets:
-                    print(f"⚠️ No se encontraron tweets para {username}")
-                    continue
-            except Exception as e:
-                print(f"❌ Error parseando respuesta de RapidApi Search: {e}")
-                log_usage("RAPIDAPI", count=1) 
-                continue
-
-            for tweet in tweets[:10]:
+            for target_username in usernames:
                 if fetching_event.is_set():
-                    print(f"⏹️ Proceso detenido mientras se procesaban acciones.")
                     return
 
-                if count >= limit:
-                    print(f"✅ Límite alcanzado ({limit}) para acción '{action_type}'")
-                    return
-
-                tweet_id = tweet.get("tweet_id")
-                tweet_text = tweet.get("text", "")
-
-                check_query = f"SELECT 1 FROM random_actions WHERE twitter_id = '{tweet_id}'"
-                already_done = run_query(check_query, fetchone=True)
-                if already_done:
-                    print(f"⏭️ Acción ya realizada anteriormente sobre tweet {tweet_id[:8]}... Buscando otro.")
-                    continue
-
-                headers_rapid = {
+                url = f"https://twttrapi.p.rapidapi.com/user-followers?username={target_username}&count=20"
+                headers_followers = {
                     'x-rapidapi-key': rapidkey,
-                    'x-rapidapi-host': "twttrapi.p.rapidapi.com",
-                    'Content-Type': "application/x-www-form-urlencoded",
-                    'twttr-session': session_token
+                    'x-rapidapi-host': "twttrapi.p.rapidapi.com"
                 }
 
-                if action_type == "like":
-                    url = "https://twttrapi.p.rapidapi.com/favorite-tweet"
-                    payload = f"tweet_id={tweet_id}"
+                try:
+                    async with session.get(url, headers=headers_followers) as resp:
+                        if resp.status != 200:
+                            print(f"❌ Error al obtener followers de @{target_username} ({resp.status})")
+                            log_usage("RAPIDAPI")
+                            continue
 
-                elif action_type == "retweet":
-                    url = "https://twttrapi.p.rapidapi.com/retweet-tweet"
-                    payload = f"tweet_id={tweet_id}"
+                        data = await resp.json()
+                        followers = []
+                        instructions = data.get("data", {}).get("user", {}).get("timeline_response", {}).get("timeline", {}).get("instructions", [])
 
-                elif action_type == "reply":
-                    if not language:
-                        print(f"⚠️ Idioma no definido para user ID {user_id}, se omite reply.")
-                        continue
+                        for instruction in instructions:
+                            if instruction.get("__typename") == "TimelineAddEntries":
+                                for entry in instruction.get("entries", []):
+                                    try:
+                                        user_result = entry["content"]["content"]["userResult"]["result"]
+                                        followers.append(user_result)
+                                    except KeyError:
+                                        continue
+                        
+                        log_usage("RAPIDAPI", count=len(followers))
+                        
+                        for user in followers:
+                            if fetching_event.is_set():
+                                return
 
-                    generated_comment = generate_reply_with_openai(tweet_text, language)
-                    if not generated_comment:
-                        print(f"⚠️ No se pudo generar comentario para tweet {tweet_id}")
-                        continue
+                            if count >= limit:
+                                print(f"✅ Límite alcanzado ({limit}) para acción 'follow'")
+                                return
 
-                    url = "https://twttrapi.p.rapidapi.com/create-tweet"
-                    payload = f"tweet_text={generated_comment}&in_reply_to_tweet_id={tweet_id}"
+                            legacy = user.get("legacy", {})
+                            verified = user.get("is_blue_verified", False)
+                            followers_count = legacy.get("followers_count", 0)
+                            username_to_follow = legacy.get("screen_name") or user.get("screen_name")
+                            print(f'{username_to_follow} {followers_count} {verified}')
+                            if not username_to_follow or not verified or followers_count < min_followers:
+                                continue
 
-                else:
-                    print(f"❌ Acción desconocida: {action_type}")
+                            already_followed = run_query(
+                                f"SELECT 1 FROM random_actions WHERE twitter_id = '{username_to_follow}' AND action_type = 'follow'",
+                                fetchone=True
+                            )
+                            if already_followed:
+                                continue
+
+                            url_follow = "https://twttrapi.p.rapidapi.com/follow-user"
+                            payload = f"username={username_to_follow}"
+                            headers_follow = {
+                                'x-rapidapi-key': rapidkey,
+                                'x-rapidapi-host': "twttrapi.p.rapidapi.com",
+                                'Content-Type': "application/x-www-form-urlencoded",
+                                'twttr-session': session_token
+                            }
+
+                            try:
+                                async with session.post(url_follow, data=payload, headers=headers_follow) as follow_resp:
+                                    log_usage("RAPIDAPI")
+                                    if follow_resp.status == 200:
+                                        print(f"✅ Seguido @{username_to_follow} ({followers_count} seguidores)")
+                                        run_query(f"""
+                                            INSERT INTO random_actions (user_id, twitter_id, action_type, created_at)
+                                            VALUES ('{user_id}', '{username_to_follow}', 'follow', NOW())
+                                        """)
+                                        count += 1
+                                    else:
+                                        print(f"❌ Error al seguir @{username_to_follow} ({follow_resp.status})")
+                            except Exception as e:
+                                print(f"❌ Excepción al seguir a @{username_to_follow}: {e}")
+
+                            await asyncio.sleep(0.2)
+
+                except Exception as e:
+                    print(f"❌ Error general al obtener followers de @{target_username}: {e}")
+
+            return
+
+        for username in usernames:
+            if fetching_event.is_set():
+                print(f"⏹️ Proceso detenido en acción '{action_type}' para user ID {user_id}")
+                return
+
+            if count >= limit:
+                print(f"✅ Límite alcanzado ({limit}) para acción '{action_type}'")
+                return
+            
+
+            query = f"from:{username} since_time:{since_timestamp}"
+            params = {"query": query, "type": "Latest"}
+            headers_rapid = {
+                "x-rapidapi-key": rapidkey,
+                "x-rapidapi-host": "twitter-api45.p.rapidapi.com",
+            }
+            search_url = "https://twitter-api45.p.rapidapi.com/search.php"
+
+            async with session.get(search_url, headers=headers_rapid, params=params) as response:
+                if response.status != 200:
+                    print(f"❌ Error al buscar tweets para {username} ({response.status})")
+                    log_usage("RAPIDAPI", count=1) 
                     continue
 
                 try:
-                    async with session.post(url, data=payload, headers=headers_rapid) as resp:
-                        log_usage("RAPIDAPI")
-                        if resp.status == 200:
-                            print(f"✅ Acción '{action_type}' realizada sobre tweet {tweet_id[:8]}... {tweet_text[:30]}")
-                            count += 1
-                            insert_query = f"""
-                                INSERT INTO random_actions (user_id, twitter_id, action_type, created_at)
-                                VALUES ('{user_id}', '{tweet_id}', '{action_type}', NOW())
-                            """
-                            run_query(insert_query)
-                        else:
-                            print(f"❌ Error al hacer {action_type} ({resp.status})")
+                    data = await response.json()
+                    tweets = data.get("timeline", [])
+                    log_usage("RAPIDAPI", count=len(tweets))
+                    if not tweets:
+                        print(f"⚠️ No se encontraron tweets para {username}")
+                        continue
                 except Exception as e:
-                    print(f"❌ Excepción en acción {action_type}: {e}")
+                    print(f"❌ Error parseando respuesta de RapidApi Search: {e}")
+                    log_usage("RAPIDAPI", count=1) 
+                    continue
 
-                await asyncio.sleep(0.1)
+                for tweet in tweets[:10]:
+                    if fetching_event.is_set():
+                        print(f"⏹️ Proceso detenido mientras se procesaban acciones.")
+                        return
 
-    print(f"🎯 Finalizado '{action_type}' con {count}/{limit} acciones")
+                    if count >= limit:
+                        print(f"✅ Límite alcanzado ({limit}) para acción '{action_type}'")
+                        return
 
+                    tweet_id = tweet.get("tweet_id")
+                    tweet_text = tweet.get("text", "")
+
+                    check_query = f"SELECT 1 FROM random_actions WHERE twitter_id = '{tweet_id}'"
+                    already_done = run_query(check_query, fetchone=True)
+                    if already_done:
+                        print(f"⏭️ Acción ya realizada anteriormente sobre tweet {tweet_id[:8]}... Buscando otro.")
+                        continue
+
+                    headers_rapid = {
+                        'x-rapidapi-key': rapidkey,
+                        'x-rapidapi-host': "twttrapi.p.rapidapi.com",
+                        'Content-Type': "application/x-www-form-urlencoded",
+                        'twttr-session': session_token
+                    }
+
+                    if action_type == "like":
+                        url = "https://twttrapi.p.rapidapi.com/favorite-tweet"
+                        payload = f"tweet_id={tweet_id}"
+
+                    elif action_type == "retweet":
+                        url = "https://twttrapi.p.rapidapi.com/retweet-tweet"
+                        payload = f"tweet_id={tweet_id}"
+
+                    elif action_type == "reply":
+                        if not language:
+                            print(f"⚠️ Idioma no definido para user ID {user_id}, se omite reply.")
+                            continue
+
+                        generated_comment = generate_reply_with_openai(tweet_text, language)
+                        if not generated_comment:
+                            print(f"⚠️ No se pudo generar comentario para tweet {tweet_id}")
+                            continue
+
+                        url = "https://twttrapi.p.rapidapi.com/create-tweet"
+                        payload = f"tweet_text={generated_comment}&in_reply_to_tweet_id={tweet_id}"
+
+                    else:
+                        print(f"❌ Acción desconocida: {action_type}")
+                        continue
+
+                    try:
+                        async with session.post(url, data=payload, headers=headers_rapid) as resp:
+                            log_usage("RAPIDAPI")
+                            if resp.status == 200:
+                                print(f"✅ Acción '{action_type}' realizada sobre tweet {tweet_id[:8]}... {tweet_text[:30]}")
+                                count += 1
+                                insert_query = f"""
+                                    INSERT INTO random_actions (user_id, twitter_id, action_type, created_at)
+                                    VALUES ('{user_id}', '{tweet_id}', '{action_type}', NOW())
+                                """
+                                run_query(insert_query)
+                            else:
+                                print(f"❌ Error al hacer {action_type} ({resp.status})")
+                    except Exception as e:
+                        print(f"❌ Excepción en acción {action_type}: {e}")
+
+                    await asyncio.sleep(0.1)
+
+        print(f"🎯 Finalizado '{action_type}' con {count}/{limit} acciones")
+    except Exception as e:
+        print(f"❌ Error {e}") 
 
 def auto_post_tweet():
     user_id = 1 
