@@ -108,22 +108,16 @@ def post_tweet(user_id, tweet_text, media_urls=None):
         result = run_query(f"SELECT session FROM users WHERE id = {user_id}", fetchone=True)
         if not result:
             return {"error": "Usuario no encontrado"}, 404
-        
+
         session = result[0]
         rapidapi_key = get_rapidapi_key()
-        
         if not rapidapi_key:
             return {"error": "No se pudo obtener la API Key de RapidAPI"}, 500
-        
+
         if isinstance(tweet_text, list):
             tweet_text = " ".join(tweet_text)
         tweet_text = str(tweet_text).replace("'", "''")
-        
-        try:
-            internal_id = run_query(f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ({user_id}, '{tweet_text}', NOW()) RETURNING id", fetchone=True)[0]
-        except Exception as db_error:
-            return {"error": "No se pudo guardar el tweet en la base de datos"}, 500
-        
+
         media_ids = []
         if media_urls:
             for media_url in media_urls[:4]:
@@ -131,12 +125,9 @@ def post_tweet(user_id, tweet_text, media_urls=None):
                     media_url = convert_drive_view_to_direct(media_url)
                     public_url, supabase_path = upload_media_to_supabase_from_url(media_url)
                     is_video = any(public_url.lower().endswith(ext) for ext in [".mp4", ".mov", ".avi", ".mkv"])
-                    upload_url = f"https://twttrapi.p.rapidapi.com/upload-video" if is_video else f"https://twttrapi.p.rapidapi.com/upload-image"
+                    upload_url = "https://twttrapi.p.rapidapi.com/upload-video" if is_video else "https://twttrapi.p.rapidapi.com/upload-image"
                     param_name = "video_url" if is_video else "image_url"
                     data = f"{param_name}={public_url}"
-                    print("Payload:", data)
-                    print("Upload URL:", upload_url)
-
 
                     headers = {
                         "x-rapidapi-key": rapidapi_key,
@@ -144,45 +135,44 @@ def post_tweet(user_id, tweet_text, media_urls=None):
                         "twttr-session": session,
                         "Content-Type": "application/x-www-form-urlencoded"
                     }
-                    print("Headers:", headers)
 
-                    print(f'')
                     resp = requests.post(upload_url, data=data, headers=headers)
-                    print("Response:", resp.text)
-                    print(f'{resp} RESP RESP RERSP')
                     log_usage("RAPIDAPI")
+
                     if resp.status_code == 200:
                         media_id = resp.json().get("media_id")
-                        print(f'mediaid {media_id}')
-                        print(f'mediaid2 {resp.json()}')
-
                         if media_id:
                             media_ids.append(media_id)
                     delete_from_supabase(supabase_path)
                 except Exception as e:
                     print(f"❌ Excepción subiendo media: {e}")
+
         payload = f"tweet_text={tweet_text}"
-        
         if media_ids:
             payload += f"&media_id={','.join(media_ids)}"
+
         tweet_resp = requests.post("https://twttrapi.p.rapidapi.com/create-tweet", data=payload, headers={
             "x-rapidapi-key": rapidapi_key,
             "x-rapidapi-host": "twttrapi.p.rapidapi.com",
             "Content-Type": "application/x-www-form-urlencoded",
             "twttr-session": session
         })
-        
         log_usage("RAPIDAPI")
-        
+
         if tweet_resp.status_code == 200 and "data" in tweet_resp.json():
             try:
                 tweet_data = tweet_resp.json()["data"]["create_tweet"]["tweet_result"]["result"]
                 tweet_id = tweet_data["rest_id"]
                 tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
-                run_query(f"UPDATE posted_tweets SET tweet_id = '{tweet_id}' WHERE id = {internal_id}")
+
+                run_query(f"""
+                    INSERT INTO posted_tweets (user_id, tweet_text, tweet_id, created_at)
+                    VALUES ({user_id}, '{tweet_text}', '{tweet_id}', NOW())
+                """)
                 return {"message": "Tweet publicado exitosamente", "tweet_id": tweet_id, "tweet_url": tweet_url}, 200
 
             except KeyError as e:
                 print("❌ Error al parsear respuesta del tweet:", tweet_resp.json())
                 return {"error": f"Respuesta inesperada al crear tweet: {e}"}, 500
+
         return {"error": "No se pudo publicar el tweet"}, tweet_resp.status_code
