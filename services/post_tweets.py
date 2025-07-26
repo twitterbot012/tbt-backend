@@ -160,15 +160,11 @@ def post_tweet(user_id, tweet_text, media_urls=None):
         log_usage("RAPIDAPI")
 
         if tweet_resp.status_code == 200 and "data" in tweet_resp.json():
+            print(tweet_resp.json())
             try:
                 tweet_data = tweet_resp.json()["data"]["create_tweet"]["tweet_result"]["result"]
                 tweet_id = tweet_data["rest_id"]
                 tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
-
-                run_query(f"""
-                    INSERT INTO posted_tweets (user_id, tweet_text, tweet_id, created_at)
-                    VALUES ({user_id}, '{tweet_text}', '{tweet_id}', NOW())
-                """)
                 return {"message": "Tweet publicado exitosamente", "tweet_id": tweet_id, "tweet_url": tweet_url}, 200
 
             except KeyError as e:
