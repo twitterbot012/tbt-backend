@@ -59,7 +59,9 @@ def translate_text_with_openai(text, target_language, custom_style):
     Simple: links and hashtags stay exactly as they are.
     Also remember, always translate to: {target_language} and NEVER add a text that is not a translation 
     of the original text example.
-    And if the language is already in {target_language}, just give me the original tweet text without aditional text."""
+    And if the language is already in {target_language}, just give me the original tweet text without aditional text. 
+    Give me less than 240 characters.
+    """
 
     models_to_try = [
         "x-ai/grok-4",
