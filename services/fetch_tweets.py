@@ -408,40 +408,54 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
         elif extraction_method == 3:
             job = get_active_custom_job(user_id)
             if not job:
-                print(f"⚠️ Usuario {user_id} sin job activo, pending o running habilitado por ventana/next_run_at.")
+                print(f"⚠️ Usuario {user_id} sin job activo, pending o running habilitado por ventana o next_run_at.")
                 return
 
             print(f"🧾 Método 3, job #{job['id']} status={job['status']} retries={job['retries']}/{job['max_retries']}")
             mark_job_running(job["id"])
-            extraction_filter = get_extraction_filter(user_id) or "cb1"
 
+            # cuánto falta para llegar a la meta
+            already = job.get("extracted_count", 0) or 0
+            target = job.get("max_items", 2000) or 2000
+            remaining = max(0, int(target - already))
+
+            if remaining <= 0:
+                print(f"✅ Job #{job['id']} ya alcanzó el objetivo, cerrando.")
+                finish_job(job["id"], note="objetivo alcanzado")
+                return
+
+            # acotamos esta corrida al faltante
+            per_run_limit = min(limit or remaining, remaining)
+
+            # corré el extractor, pasándole el fetching_event y usando per_run_limit
             count = await extract_custom_one_time(
-                session,
-                user_id,
-                job,
-                monitored_users,
-                keywords,
-                extraction_filter,
-                fetching_event,  
+                session, user_id, job, monitored_users, keywords, per_run_limit, fetching_event
             )
 
+            # ventana de fechas vencida
             now_ts = int(time.time())
             date_to_ts = int(job["date_to"].replace(tzinfo=timezone.utc).timestamp()) if job["date_to"] else now_ts
             out_of_window = now_ts > date_to_ts
 
-            if count > 0:
-                finish_job(job["id"], count, note=f"ok, {count} items")
+            # actualizamos progreso, incluso si count = 0
+            prog = bump_job_progress(job["id"], count, note=f"+{count} en esta corrida")
+            new_remaining = max(0, int((prog["max_items"] or target) - (prog["extracted_count"] or 0)))
+
+            if new_remaining <= 0:
+                finish_job(job["id"], note="objetivo alcanzado")
+                print(f"🎯 Job #{job['id']} llegó al objetivo, total extraído {prog['extracted_count']}.")
             else:
+                # si la ventana expiró, cerrar, si no, programar retry hasta llegar a la meta
                 if out_of_window:
-                    finish_job(job["id"], 0, note="sin resultados, ventana vencida")
+                    finish_job(job["id"], note="ventana vencida")
+                    print(f"⛔ Job #{job['id']} con ventana vencida, cerrando.")
                 elif job["retries"] + 1 >= job["max_retries"]:
-                    finish_job(job["id"], 0, note="sin resultados, max_retries")
+                    finish_job(job["id"], note="max_retries alcanzado")
+                    print(f"⛔ Job #{job['id']} alcanzó max_retries, cerrando.")
                 else:
-                    schedule_job_retry(job["id"], job["retries"] + 1, note="reintento en 1h")
-                    print(f"⏰ Reintento programado para job #{job['id']} a las +1h")
-        else:
-            print(f"⚠️ Método de extracción desconocido: {extraction_method}")
-            return
+                    schedule_job_retry(job["id"], next_run_in_minutes=60, retries=job["retries"] + 1, note=f"faltan {new_remaining}, reintento en 1h")
+                    print(f"⏰ Job #{job['id']} reintentará en 1h, faltan {new_remaining}.")
+
 
         print(f"🎯 Finalizado. Total tweets extraídos: {count}/{limit}")
 
