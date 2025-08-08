@@ -17,6 +17,11 @@ import tempfile
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
 
+def _i(x, default=0):
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return default
 
 def bump_job_progress(job_id: int, delta: int, note: str = None):
     safe_note = note.replace("'", "''") if note else None
@@ -68,11 +73,12 @@ def finish_job(job_id: int, note: str = None):
 
 def get_active_custom_job(user_id):
     q = f"""
-    SELECT id, date_from, date_to, max_items, scope, status, retries, max_retries, next_run_at
+    SELECT id, date_from, date_to, max_items, scope, status, retries, max_retries, next_run_at,
+           COALESCE(extracted_count, 0)
     FROM custom_extract_jobs
-    WHERE user_id = {user_id}
+    WHERE user_id = {int(user_id)}
       AND status IN ('pending','running')
-      AND (next_run_at IS NULL OR next_run_at <= NOW())
+      AND (next_run_at IS NULL OR next_run_at <= (NOW() AT TIME ZONE 'UTC'))
     ORDER BY created_at DESC
     LIMIT 1
     """
@@ -80,15 +86,16 @@ def get_active_custom_job(user_id):
     if not row:
         return None
     return {
-        "id": row[0],
+        "id": _i(row[0]),
         "date_from": row[1],
         "date_to": row[2],
-        "max_items": row[3],
+        "max_items": _i(row[3], 0),
         "scope": row[4] or "users_keywords",
         "status": row[5],
-        "retries": row[6] or 0,
-        "max_retries": row[7] or 24,
+        "retries": _i(row[6], 0),
+        "max_retries": _i(row[7], 24),
         "next_run_at": row[8],
+        "extracted_count": _i(row[9], 0),
     }
 
 def _to_unix_ts(dt_val):
@@ -174,9 +181,8 @@ def get_rapidapi_key():
 
 
 async def get_tweet_limit_per_hour(user_id):
-    query = f"SELECT rate_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 10 
+    result = run_query(f"SELECT rate_limit FROM users WHERE id = {user_id}", fetchone=True)
+    return _i(result[0], 10) if result else 10
 
 
 def get_extraction_method(user_id):
@@ -186,27 +192,23 @@ def get_extraction_method(user_id):
 
 
 def get_like_limit_per_hour(user_id):
-    query = f"SELECT likes_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1 
+    result = run_query(f"SELECT likes_limit FROM users WHERE id = {user_id}", fetchone=True)
+    return _i(result[0], 1) if result else 1
 
 
 def get_comment_limit_per_hour(user_id):
-    query = f"SELECT comments_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1
+    result = run_query(f"SELECT comments_limit FROM users WHERE id = {user_id}", fetchone=True)
+    return _i(result[0], 1) if result else 1
 
 
 def get_follow_limit_per_hour(user_id):
-    query = f"SELECT follows_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1
+    result = run_query(f"SELECT follows_limit FROM users WHERE id = {user_id}", fetchone=True)
+    return _i(result[0], 1) if result else 1
 
 
 def get_retweet_limit_per_hour(user_id):
-    query = f"SELECT retweets_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1
+    result = run_query(f"SELECT retweets_limit FROM users WHERE id = {user_id}", fetchone=True)
+    return _i(result[0], 1) if result else 1
 
 
 async def count_tweets_for_user(user_id):
@@ -414,46 +416,42 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             print(f"🧾 Método 3, job #{job['id']} status={job['status']} retries={job['retries']}/{job['max_retries']}")
             mark_job_running(job["id"])
 
-            # cuánto falta para llegar a la meta
-            already = job.get("extracted_count", 0) or 0
-            target = job.get("max_items", 2000) or 2000
-            remaining = max(0, int(target - already))
+            already = _i(job.get("extracted_count"), 0)
+            target  = _i(job.get("max_items"), 2000)
+            remaining = max(0, target - already)
 
             if remaining <= 0:
-                print(f"✅ Job #{job['id']} ya alcanzó el objetivo, cerrando.")
                 finish_job(job["id"], note="objetivo alcanzado")
                 return
 
-            # acotamos esta corrida al faltante
-            per_run_limit = min(limit or remaining, remaining)
+            per_run_limit = min(_i(limit, remaining), remaining)
+            extraction_filter = get_extraction_filter(user_id) or "cb1"
 
-            # corré el extractor, pasándole el fetching_event y usando per_run_limit
             count = await extract_custom_one_time(
-                session, user_id, job, monitored_users, keywords, per_run_limit, fetching_event
+                session, user_id, job, monitored_users, keywords,
+                extraction_filter,  # <- ahora sí
+                per_run_limit,      # <- NUEVO arg
+                fetching_event
             )
 
-            # ventana de fechas vencida
             now_ts = int(time.time())
             date_to_ts = int(job["date_to"].replace(tzinfo=timezone.utc).timestamp()) if job["date_to"] else now_ts
             out_of_window = now_ts > date_to_ts
 
-            # actualizamos progreso, incluso si count = 0
-            prog = bump_job_progress(job["id"], count, note=f"+{count} en esta corrida")
-            new_remaining = max(0, int((prog["max_items"] or target) - (prog["extracted_count"] or 0)))
+            prog = bump_job_progress(job["id"], _i(count), note=f"+{count} en esta corrida")
+            new_remaining = max(0, _i(prog.get("max_items"), target) - _i(prog.get("extracted_count"), already))
 
             if new_remaining <= 0:
                 finish_job(job["id"], note="objetivo alcanzado")
                 print(f"🎯 Job #{job['id']} llegó al objetivo, total extraído {prog['extracted_count']}.")
             else:
-                # si la ventana expiró, cerrar, si no, programar retry hasta llegar a la meta
                 if out_of_window:
                     finish_job(job["id"], note="ventana vencida")
-                    print(f"⛔ Job #{job['id']} con ventana vencida, cerrando.")
-                elif job["retries"] + 1 >= job["max_retries"]:
+                elif _i(job["retries"]) + 1 >= _i(job["max_retries"], 24):
                     finish_job(job["id"], note="max_retries alcanzado")
-                    print(f"⛔ Job #{job['id']} alcanzó max_retries, cerrando.")
                 else:
-                    schedule_job_retry(job["id"], next_run_in_minutes=60, retries=job["retries"] + 1, note=f"faltan {new_remaining}, reintento en 1h")
+                    schedule_job_retry(job["id"], next_run_in_minutes=60, retries=_i(job["retries"]) + 1,
+                                       note=f"faltan {new_remaining}, reintento en 1h")
                     print(f"⏰ Job #{job['id']} reintentará en 1h, faltan {new_remaining}.")
 
 
@@ -721,7 +719,7 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
             
 
             query = f"from:{username} since_time:{since_timestamp}"
-            params = {"query": query, "type": "Latest"}
+            params = {"query": query, "search_type": "Latest"}
             headers_rapid = {
                 "x-rapidapi-key": rapidkey,
                 "x-rapidapi-host": "twitter-api45.p.rapidapi.com",
@@ -1342,8 +1340,8 @@ async def extract_custom_one_time(session, user_id, job, monitored_users, keywor
     since_ts = _to_unix_ts(job["date_from"])
     until_ts = _to_unix_ts(job["date_to"])
     hard_cap = job["max_items"] or 2000
-    if hard_cap and hard_cap > 0:
-        hard_cap = min(hard_cap, hard_cap)  # mantiene tu lógica, si querés mezclá con otro limit externo
+    if hard_cap <= 0:
+        return 0
 
     extraction_filter = extraction_filter or get_extraction_filter(user_id) or "cb1"
     lang_code = _lang_code_for_user(user_id)
