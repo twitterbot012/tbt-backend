@@ -38,7 +38,7 @@ app.register_blueprint(tweets_bp, url_prefix="/tweets")
 # Helpers Método 3
 
 def is_method3_user(user_id: int) -> bool:
-    row = run_query(f"SELECT extraction_method FROM users WHERE id = {int(user_id)}", fetchone=True)
+    row = run_query(f"SELECT extraction_method FROM users WHERE id = {user_id}", fetchone=True)
     return bool(row and row[0] == 3)
 
 def ensure_method3_workers():
@@ -323,11 +323,16 @@ def status_post():
 
 @app.route("/start-process/<user_id>", methods=["POST"])
 def start_process_user(user_id):
-    if user_id not in user_process_threads or not user_process_threads[user_id].is_alive():
+    try:
+        uid = int(user_id)
+    except ValueError:
+        return jsonify({"error": "user_id debe ser numérico"}), 400
+
+    if uid not in user_process_threads or not user_process_threads[uid].is_alive():
         event = threading.Event()
-        user_process_events[user_id] = event
-        thread = threading.Thread(target=start_service_for_user, args=(user_id, event), daemon=True)
-        user_process_threads[user_id] = thread
+        user_process_events[uid] = event
+        thread = threading.Thread(target=start_service_for_user, args=(uid, event), daemon=True)
+        user_process_threads[uid] = thread
         thread.start()
         return jsonify({"status": "started"}), 200
     else:
@@ -336,9 +341,14 @@ def start_process_user(user_id):
 
 @app.route("/stop-process/<user_id>", methods=["POST"])
 def stop_process_user(user_id):
-    if user_id in user_process_threads and user_process_threads[user_id].is_alive():
-        user_process_events[user_id].set()
-        user_process_threads[user_id].join(timeout=10)
+    try:
+        uid = int(user_id)
+    except ValueError:
+        return jsonify({"error": "user_id debe ser numérico"}), 400
+
+    if uid in user_process_threads and user_process_threads[uid].is_alive():
+        user_process_events[uid].set()
+        user_process_threads[uid].join(timeout=10)
         return jsonify({"status": "stopped"}), 200
     else:
         return jsonify({"status": "not running"}), 400
@@ -346,7 +356,12 @@ def stop_process_user(user_id):
 
 @app.route("/status-process/<user_id>", methods=["GET"])
 def status_process_user(user_id):
-    if user_id in user_process_threads and user_process_threads[user_id].is_alive():
+    try:
+        uid = int(user_id)
+    except ValueError:
+        return jsonify({"error": "user_id debe ser numérico"}), 400
+
+    if uid in user_process_threads and user_process_threads[uid].is_alive():
         return jsonify({"status": "running"}), 200
     else:
         return jsonify({"status": "stopped"}), 200
@@ -388,17 +403,18 @@ def start_service_for_user(user_id, process_event):
 
                         next_run_at, st = row[0], row[1]
                         if st == 'pending' and next_run_at:
-                            # dormir fino, pero abortable
-                            delay = max(0, int((next_run_at - datetime.utcnow()).total_seconds()))
+                            now_utc = datetime.now(timezone.utc)
+                            nra = next_run_at
+                            if nra.tzinfo is None:
+                                nra = nra.replace(tzinfo=timezone.utc)
+                            delay = max(0, int((nra - now_utc).total_seconds()))
                             print(f"⏳ Método 3, esperando {delay} s hasta next_run_at para user {user_id}...")
                             for _ in range(delay):
                                 if process_event.is_set():
                                     break
                                 time.sleep(1)
-                            # loop continúa y vuelve a ejecutar fetch+post para este user
                             continue
                         else:
-                            # si está 'done' o sin next_run, terminar
                             print(f"✅ Método 3 sin más pendientes, cerrando hilo.")
                             break
 

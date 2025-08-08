@@ -476,7 +476,7 @@ async def fetch_tweets_for_single_user(user_id, fetching_event):
 async def fetch_tweets_for_all_users(fetching_event):
     print("🔍 Buscando tweets para cada usuario registrado (etapa 1)...")
 
-    query = "SELECT DISTINCT id FROM users WHERE COALESCE(extraction_method, 1) <> 3"
+    query = "SELECT DISTINCT id FROM users"
     users = run_query(query, fetchall=True)
     print(users)
 
@@ -509,7 +509,7 @@ async def fetch_tweets_for_all_users(fetching_event):
 async def fetch_random_tasks_for_all_users(fetching_event):
     print("🎲 Iniciando tareas aleatorias para cada usuario (etapa 1)...")
 
-    query = "SELECT DISTINCT id FROM users WHERE COALESCE(extraction_method, 1) <> 3"
+    query = "SELECT DISTINCT id FROM users"
     users = run_query(query, fetchall=True)
 
     if not users:
@@ -803,7 +803,7 @@ def auto_post_tweet():
 async def post_tweets_for_all_users(posting_event):
     print("🚀 Iniciando publicación de tweets para cada usuario registrado...")
 
-    query = "SELECT DISTINCT id FROM users WHERE COALESCE(extraction_method, 1) <> 3"
+    query = "SELECT DISTINCT id FROM users"
     users = run_query(query, fetchall=True)
     print(users)
 
