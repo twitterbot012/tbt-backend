@@ -17,6 +17,63 @@ import tempfile
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
 
+def mark_job_running(job_id):
+    run_query(f"""
+      UPDATE custom_extract_jobs
+      SET status = 'running', updated_at = NOW()
+      WHERE id = {job_id}
+    """)
+
+def schedule_job_retry(job_id, retries, note=None):
+    safe_note = note.replace("'", "''") if note else None
+    note_sql = f", note = '{safe_note}'" if safe_note is not None else ""
+    run_query(f"""
+      UPDATE custom_extract_jobs
+      SET status = 'pending',
+          retries = {retries},
+          next_run_at = NOW() + INTERVAL '1 hour',
+          updated_at = NOW()
+          {note_sql}
+      WHERE id = {job_id}
+    """)
+
+def finish_job(job_id, count, note=None):
+    safe_note = note.replace("'", "''") if note else None
+    note_sql = f", note = '{safe_note}'" if safe_note is not None else ""
+    run_query(f"""
+      UPDATE custom_extract_jobs
+      SET status = 'done',
+          extracted_count = {count},
+          next_run_at = NULL,
+          updated_at = NOW()
+          {note_sql}
+      WHERE id = {job_id}
+    """)
+
+def get_active_custom_job(user_id):
+    q = f"""
+    SELECT id, date_from, date_to, max_items, scope, status, retries, max_retries, next_run_at
+    FROM custom_extract_jobs
+    WHERE user_id = {user_id}
+      AND status IN ('pending','running')
+      AND (next_run_at IS NULL OR next_run_at <= NOW())
+    ORDER BY created_at DESC
+    LIMIT 1
+    """
+    row = run_query(q, fetchone=True)
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "date_from": row[1],
+        "date_to": row[2],
+        "max_items": row[3],
+        "scope": row[4] or "users_keywords",
+        "status": row[5],
+        "retries": row[6] or 0,
+        "max_retries": row[7] or 24,
+        "next_run_at": row[8],
+    }
 
 def _to_unix_ts(dt_val):
     # Acepta datetime o string ISO yyyy-mm-dd HH:MM:SS
@@ -333,33 +390,33 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             count = await extract_by_copy_user(session, user_id, monitored_users, limit, fetching_event)
 
         elif extraction_method == 3:
-            job = get_pending_custom_extract_job(user_id)
+            job = get_active_custom_job(user_id)
             if not job:
-                print(f"⚠️ Usuario {user_id} no tiene un custom_extract_jobs pendiente.")
+                print(f"⚠️ Usuario {user_id} sin job activo, pending o running habilitado por ventana/next_run_at.")
                 return
 
-            try:
-                mark_custom_job_status(job["id"], "running")
+            print(f"🧾 Método 3, job #{job['id']} status={job['status']} retries={job['retries']}/{job['max_retries']}")
+            mark_job_running(job["id"])
+            extraction_filter = get_extraction_filter(user_id) or "cb1"
 
-                # Podés reutilizar tus listas, no son obligatorias si scope es keywords_only
-                count = await extract_custom_one_time(
-                    session=session,
-                    user_id=user_id,
-                    job=job,
-                    monitored_users=[u for u in monitored_users],   # lista de strings
-                    keywords=[k for k in keywords],                 # lista de strings
-                    limit=limit,
-                    fetching_event=fetching_event
-                )
+            # acá llamás a tu extractor que devuelve 'count'
+            count = await extract_custom_one_time(session, user_id, job, monitored_users, keywords, extraction_filter)
 
-                mark_custom_job_status(job["id"], "done", extracted_count=count)
-                print(f"🎯 Custom One-Time Extract finalizado. Total: {count}")
+            # decidir si terminamos o reintentamos
+            now_ts = int(time.time())
+            date_to_ts = int(job["date_to"].replace(tzinfo=timezone.utc).timestamp()) if job["date_to"] else now_ts
+            out_of_window = now_ts > date_to_ts
 
-            except Exception as e:
-                mark_custom_job_status(job["id"], "error", note=str(e))
-                print(f"❌ Error en Custom One-Time Extract: {e}")
-                return
-
+            if count > 0:
+                finish_job(job["id"], count, note=f"ok, {count} items")
+            else:
+                if out_of_window:
+                    finish_job(job["id"], 0, note="sin resultados, ventana vencida")
+                elif job["retries"] + 1 >= job["max_retries"]:
+                    finish_job(job["id"], 0, note="sin resultados, max_retries")
+                else:
+                    schedule_job_retry(job["id"], job["retries"] + 1, note="reintento en 1h")
+                    print(f"⏰ Reintento programado para job #{job['id']} a las +1h")
         else:
             print(f"⚠️ Método de extracción desconocido: {extraction_method}")
             return
@@ -777,6 +834,9 @@ async def post_tweets_for_single_user(user_id, posting_event):
         print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
         return
 
+    method_row = run_query(f"SELECT extraction_method FROM users WHERE id = '{user_id}'", fetchone=True)
+    method = method_row[0] if method_row else 1
+
     tweet_limit = await get_tweet_limit_per_hour(user_id)
     tweets_posted_last_hour = await count_tweets_for_user(user_id)
 
@@ -784,11 +844,27 @@ async def post_tweets_for_single_user(user_id, posting_event):
         print(f"⛔ Usuario {user_id} alcanzó el límite de {tweet_limit} tweets por hora. Saltando publicación.")
         return
 
+    if method == 3:
+        has_items = run_query(f"""
+            SELECT 1
+            FROM collected_tweets
+            WHERE user_id = '{user_id}' AND priority = 1 AND source = 'custom_one_time'
+            LIMIT 1
+        """, fetchone=True)
+        if not has_items:
+            print(f"⚠ Usuario {user_id} en método 3, sin items del job, salto publicación.")
+            return
+
+    # REEMPLAZAR este SELECT por el siguiente
     query_tweets = f"""
         SELECT tweet_id, tweet_text
         FROM collected_tweets
         WHERE user_id = '{user_id}' AND priority = 1
     """
+    if method == 3:
+        # NUEVO, publicar solo lo que vino del custom job
+        query_tweets += " AND source = 'custom_one_time'"
+
     tweets_to_post = run_query(query_tweets, fetchall=True) or []
 
     if not tweets_to_post:
@@ -1200,10 +1276,22 @@ async def old_fetch_tweets_for_all_users(fetching_event):
     print("✅ Búsqueda de tweets completada.")
 
 
-async def extract_custom_one_time(session, user_id, job, monitored_users, keywords, limit, fetching_event):
+def _quote_kw(kw: str) -> str:
+    kw = (kw or "").strip()
+    if not kw:
+        return ""
+    return f'"{kw}"' if " " in kw and not kw.startswith('"') else kw
+
+
+def _lang_code_for_user(user_id: int):
+    row = run_query(f"SELECT language FROM users WHERE id = '{user_id}'", fetchone=True)
+    mapping = {"English": "en", "Spanish": "es", "Español": "es", "Portuguese": "pt", "French": "fr"}
+    return mapping.get(row[0]) if row and row[0] else None
+
+
+async def extract_custom_one_time(session, user_id, job, monitored_users, keywords, extraction_filter, fetching_event):
     """
-    Extrae por rango de fechas y envía todo a 'To-Be-Posted',
-    en tu caso collected_tweets con priority = 1.
+    Extrae por rango de fechas y envía todo a 'To-Be-Posted', en tu caso collected_tweets con priority = 1.
     """
     rapidapi_key = get_rapidapi_key()
     if not rapidapi_key:
@@ -1218,9 +1306,12 @@ async def extract_custom_one_time(session, user_id, job, monitored_users, keywor
     since_ts = _to_unix_ts(job["date_from"])
     until_ts = _to_unix_ts(job["date_to"])
     hard_cap = job["max_items"] or 2000
-    hard_cap = min(hard_cap, limit) if limit else hard_cap
+    if hard_cap and hard_cap > 0:
+        hard_cap = min(hard_cap, hard_cap)  # mantiene tu lógica, si querés mezclá con otro limit externo
 
-    extraction_filter = get_extraction_filter(user_id)
+    extraction_filter = extraction_filter or get_extraction_filter(user_id) or "cb1"
+    lang_code = _lang_code_for_user(user_id)
+
     def apply_filter(base):
         if extraction_filter == "cb2":
             return f"({base} filter:images)"
@@ -1235,21 +1326,32 @@ async def extract_custom_one_time(session, user_id, job, monitored_users, keywor
         return f"({base})"
 
     collected = 0
+    queries = set()  # dedupe
 
-    queries = []
+    scope = job.get("scope") or "users_keywords"
+    kw_list = keywords if keywords else [""]
 
-    if job["scope"] == "keywords_only":
-        kw_list = keywords if keywords else [""]
+    if scope == "keywords_only":
         for kw in kw_list:
-            base = f"{f'({kw}) ' if kw else ''}since_time:{since_ts} until_time:{until_ts}"
-            queries.append(apply_filter(base))
+            kwx = _quote_kw(kw)
+            base = f"{kwx} since_time:{since_ts} until_time:{until_ts}"
+            if lang_code:
+                base += f" lang:{lang_code}"
+            queries.add(apply_filter(base.strip()))
     else:
-        users = monitored_users if monitored_users else []
-        kw_list = keywords if keywords else [""]
+        users = monitored_users or []
+        if not users:
+            print("⚠️ Scope users_keywords sin usuarios monitoreados.")
+            return 0
         for u in users:
             for kw in kw_list:
-                base = f"from:{u} {f'({kw}) ' if kw else ''}since_time:{since_ts} until_time:{until_ts}"
-                queries.append(apply_filter(base))
+                kwx = _quote_kw(kw)
+                base = f"from:{u} {kwx} since_time:{since_ts} until_time:{until_ts}"
+                if lang_code:
+                    base += f" lang:{lang_code}"
+                queries.add(apply_filter(base.strip()))
+
+    seen = set()
 
     for q in queries:
         if fetching_event.is_set():
@@ -1262,44 +1364,57 @@ async def extract_custom_one_time(session, user_id, job, monitored_users, keywor
         print(f"🔎 Custom One-Time Extract, consultando: {q}")
 
         try:
+            # intento Latest
             async with session.get("https://twitter-api45.p.rapidapi.com/search.php", headers=headers, params=params) as resp:
                 if resp.status != 200:
                     print(f"❌ Error {resp.status} en búsqueda para: {q}")
                     log_usage("RAPIDAPI", count=1)
                     continue
-
                 data = await resp.json()
                 timeline = data.get("timeline", [])
                 log_usage("RAPIDAPI", count=len(timeline))
-                if not timeline:
+
+            # fallback Top si no hay resultados
+            if not timeline:
+                params["search_type"] = "Top"
+                async with session.get("https://twitter-api45.p.rapidapi.com/search.php", headers=headers, params=params) as resp2:
+                    if resp2.status == 200:
+                        data2 = await resp2.json()
+                        timeline = data2.get("timeline", [])
+                        log_usage("RAPIDAPI", count=len(timeline))
+                    else:
+                        log_usage("RAPIDAPI", count=1)
+
+            if not timeline:
+                continue
+
+            for t in timeline:
+                if fetching_event.is_set():
+                    print("⏹️ Detenido durante el guardado.")
+                    break
+                if collected >= hard_cap:
+                    break
+
+                tweet_id = t.get("tweet_id")
+                if not tweet_id or tweet_id in seen:
+                    continue
+                seen.add(tweet_id)
+
+                tweet_text = t.get("text") or ""
+                created_at = t.get("created_at")
+
+                exists = run_query(
+                    f"SELECT 1 FROM collected_tweets WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}' LIMIT 1",
+                    fetchone=True
+                )
+                if exists:
                     continue
 
-                for t in timeline:
-                    if fetching_event.is_set():
-                        print("⏹️ Detenido durante el guardado.")
-                        break
-                    if collected >= hard_cap:
-                        break
+                save_collected_tweet(user_id, "custom_one_time", None, tweet_id, tweet_text, created_at, extraction_filter)
+                run_query(f"UPDATE collected_tweets SET priority = 1 WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}'")
+                collected += 1
 
-                    tweet_id = t.get("tweet_id")
-                    tweet_text = t.get("text") or ""
-                    created_at = t.get("created_at")
-
-                    if not tweet_id:
-                        continue
-
-                    exists = run_query(
-                        f"SELECT 1 FROM collected_tweets WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}' LIMIT 1",
-                        fetchone=True
-                    )
-                    if exists:
-                        continue
-
-                    save_collected_tweet(user_id, "custom_one_time", None, tweet_id, tweet_text, created_at, extraction_filter)
-                    run_query(f"UPDATE collected_tweets SET priority = 1 WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}'")
-                    collected += 1
-
-                    await asyncio.sleep(0.05)
+                await asyncio.sleep(0.05)
 
         except Exception as e:
             print(f"❌ Error en custom extract: {e}")

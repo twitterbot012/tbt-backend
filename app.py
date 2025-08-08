@@ -13,6 +13,7 @@ from multiprocessing import Manager
 import time
 import os
 from services.db_service import run_query
+import datetime
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -372,8 +373,34 @@ def start_service_for_user(user_id, process_event):
                         break
 
                     if method == 3:
-                        print(f"✅ Método 3 finalizado para usuario {user_id}, cerrando hilo dedicado.")
-                        break
+                        # si hay otro intento programado, esperamos hasta next_run_at o hasta que nos frenen
+                        row = run_query(f"""
+                            SELECT next_run_at, status
+                            FROM custom_extract_jobs
+                            WHERE user_id = {user_id}
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        """, fetchone=True)
+
+                        if not row:
+                            print(f"✅ Método 3, sin job posterior, cerrando hilo.")
+                            break
+
+                        next_run_at, st = row[0], row[1]
+                        if st == 'pending' and next_run_at:
+                            # dormir fino, pero abortable
+                            delay = max(0, int((next_run_at - datetime.utcnow()).total_seconds()))
+                            print(f"⏳ Método 3, esperando {delay} s hasta next_run_at para user {user_id}...")
+                            for _ in range(delay):
+                                if process_event.is_set():
+                                    break
+                                time.sleep(1)
+                            # loop continúa y vuelve a ejecutar fetch+post para este user
+                            continue
+                        else:
+                            # si está 'done' o sin next_run, terminar
+                            print(f"✅ Método 3 sin más pendientes, cerrando hilo.")
+                            break
 
                     print(f"📢 Random actions para usuario ID: {user_id}...")
                     await asyncio.create_task(fetch_random_tasks_for_user(user_id, process_event))
