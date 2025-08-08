@@ -16,28 +16,61 @@ import tempfile
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
-def get_google_json():
-    query = "SELECT json FROM api_keys WHERE id = 4"  
-    result = run_query(query, fetchone=True)
-    return result[0] if result else None 
+def _to_unix_ts(dt_val):
+    # Acepta datetime o string ISO yyyy-mm-dd HH:MM:SS
+    if isinstance(dt_val, datetime):
+        if dt_val.tzinfo is None:
+            dt_val = dt_val.replace(tzinfo=timezone.utc)
+        return int(dt_val.timestamp())
+    if isinstance(dt_val, str):
+        # Permite 'YYYY-MM-DD' o 'YYYY-MM-DD HH:MM:SS'
+        try:
+            if len(dt_val.strip()) == 10:
+                dt_obj = datetime.strptime(dt_val, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            else:
+                dt_obj = datetime.strptime(dt_val, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            return int(dt_obj.timestamp())
+        except Exception:
+            # Último intento, ISO flexible
+            return int(datetime.fromisoformat(dt_val).replace(tzinfo=timezone.utc).timestamp())
+    raise ValueError("Formato de fecha no soportado")
 
 
-def get_drive_service():
-    json_string = get_google_json()
-    if not json_string:
-        raise ValueError("❌ No se encontró la clave del Service Account en la base de datos.")
+def get_pending_custom_extract_job(user_id):
+    q = f"""
+    SELECT id, date_from, date_to, max_items, scope
+    FROM custom_extract_jobs
+    WHERE user_id = {user_id} AND status = 'pending'
+    ORDER BY created_at DESC
+    LIMIT 1
+    """
+    row = run_query(q, fetchone=True)
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "date_from": row[1],
+        "date_to": row[2],
+        "max_items": row[3],
+        "scope": row[4] or "users_keywords",
+    }
 
-    credentials_data = json.loads(json_string)
 
-    creds = service_account.Credentials.from_service_account_info(
-        credentials_data,
-        scopes=SCOPES
-    )
+def mark_custom_job_status(job_id, status, extracted_count=0, note=None):
+    # Escapamos comillas simples para SQL
+    safe_note = note.replace("'", "''") if note else None
+    note_sql = f", note = '{safe_note}'" if safe_note is not None else ""
 
-    return build("drive", "v3", credentials=creds)
+    q = f"""
+    UPDATE custom_extract_jobs
+    SET status = '{status}',
+        extracted_count = {extracted_count},
+        updated_at = NOW(){note_sql}
+    WHERE id = {job_id}
+    """
+    run_query(q)
 
 
 def extract_folder_id(url):
@@ -300,17 +333,32 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             count = await extract_by_copy_user(session, user_id, monitored_users, limit, fetching_event)
 
         elif extraction_method == 3:
-            drive_link = run_query(f"SELECT drive_link FROM users WHERE id = {user_id}", fetchone=True)
-            if not drive_link or not drive_link[0]:
-                print(f"⚠️ Usuario {user_id} no tiene drive_link configurado.")
+            job = get_pending_custom_extract_job(user_id)
+            if not job:
+                print(f"⚠️ Usuario {user_id} no tiene un custom_extract_jobs pendiente.")
                 return
 
-            folder_id = extract_folder_id(drive_link[0])
-            if not folder_id:
-                print(f"❌ No se pudo extraer folder_id del link: {drive_link[0]}")
-                return
+            try:
+                mark_custom_job_status(job["id"], "running")
 
-            count = await extract_from_drive_link(user_id, folder_id, drive_link[0])
+                # Podés reutilizar tus listas, no son obligatorias si scope es keywords_only
+                count = await extract_custom_one_time(
+                    session=session,
+                    user_id=user_id,
+                    job=job,
+                    monitored_users=[u for u in monitored_users],   # lista de strings
+                    keywords=[k for k in keywords],                 # lista de strings
+                    limit=limit,
+                    fetching_event=fetching_event
+                )
+
+                mark_custom_job_status(job["id"], "done", extracted_count=count)
+                print(f"🎯 Custom One-Time Extract finalizado. Total: {count}")
+
+            except Exception as e:
+                mark_custom_job_status(job["id"], "error", note=str(e))
+                print(f"❌ Error en Custom One-Time Extract: {e}")
+                return
 
         else:
             print(f"⚠️ Método de extracción desconocido: {extraction_method}")
@@ -1152,61 +1200,109 @@ async def old_fetch_tweets_for_all_users(fetching_event):
     print("✅ Búsqueda de tweets completada.")
 
 
-async def extract_from_drive_link(user_id, folder_id, drive_link):
-    drive_service = get_drive_service()
-    collected_count = 0
-    language = run_query(f"SELECT language FROM users WHERE id = '{user_id}'", fetchone=True)
+async def extract_custom_one_time(session, user_id, job, monitored_users, keywords, limit, fetching_event):
+    """
+    Extrae por rango de fechas y envía todo a 'To-Be-Posted',
+    en tu caso collected_tweets con priority = 1.
+    """
+    rapidapi_key = get_rapidapi_key()
+    if not rapidapi_key:
+        print("❌ No se pudo obtener la API Key de RapidAPI.")
+        return 0
 
-    results = drive_service.files().list(
-        q=f"'{folder_id}' in parents and trashed = false",
-        fields="files(id, name, mimeType, webViewLink)"
-    ).execute()
-    files = results.get("files", [])
+    headers = {
+        "x-rapidapi-key": rapidapi_key,
+        "x-rapidapi-host": "twitter-api45.p.rapidapi.com",
+    }
 
-    grouped = {}
-    for file in files:
-        base_name = extract_base_name(file["name"])
-        grouped.setdefault(base_name, []).append(file)
+    since_ts = _to_unix_ts(job["date_from"])
+    until_ts = _to_unix_ts(job["date_to"])
+    hard_cap = job["max_items"] or 2000
+    hard_cap = min(hard_cap, limit) if limit else hard_cap
 
-    for base_name, media_group in grouped.items():
-        check_query = (
-            f"SELECT 1 FROM drive_media_processed "
-            f"WHERE user_id = {user_id} AND base_name = '{base_name}' AND drive_link = '{drive_link}'"
-        )
-        exists = run_query(check_query, fetchone=True)
+    extraction_filter = get_extraction_filter(user_id)
+    def apply_filter(base):
+        if extraction_filter == "cb2":
+            return f"({base} filter:images)"
+        if extraction_filter == "cb3":
+            return f"({base} filter:native_video)"
+        if extraction_filter == "cb4":
+            return f"({base} filter:media)"
+        if extraction_filter == "cb5":
+            return f"({base} filter:images -filter:videos)"
+        if extraction_filter == "cb6":
+            return f"({base} -filter:images -filter:videos -filter:links)"
+        return f"({base})"
 
-        if exists:
-            print(f"⏭️ Ya procesado: {base_name}")
+    collected = 0
+
+    queries = []
+
+    if job["scope"] == "keywords_only":
+        kw_list = keywords if keywords else [""]
+        for kw in kw_list:
+            base = f"{f'({kw}) ' if kw else ''}since_time:{since_ts} until_time:{until_ts}"
+            queries.append(apply_filter(base))
+    else:
+        users = monitored_users if monitored_users else []
+        kw_list = keywords if keywords else [""]
+        for u in users:
+            for kw in kw_list:
+                base = f"from:{u} {f'({kw}) ' if kw else ''}since_time:{since_ts} until_time:{until_ts}"
+                queries.append(apply_filter(base))
+
+    for q in queries:
+        if fetching_event.is_set():
+            print("⏹️ Proceso detenido por evento externo.")
+            break
+        if collected >= hard_cap:
+            break
+
+        params = {"query": q, "search_type": "Latest"}
+        print(f"🔎 Custom One-Time Extract, consultando: {q}")
+
+        try:
+            async with session.get("https://twitter-api45.p.rapidapi.com/search.php", headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    print(f"❌ Error {resp.status} en búsqueda para: {q}")
+                    log_usage("RAPIDAPI", count=1)
+                    continue
+
+                data = await resp.json()
+                timeline = data.get("timeline", [])
+                log_usage("RAPIDAPI", count=len(timeline))
+                if not timeline:
+                    continue
+
+                for t in timeline:
+                    if fetching_event.is_set():
+                        print("⏹️ Detenido durante el guardado.")
+                        break
+                    if collected >= hard_cap:
+                        break
+
+                    tweet_id = t.get("tweet_id")
+                    tweet_text = t.get("text") or ""
+                    created_at = t.get("created_at")
+
+                    if not tweet_id:
+                        continue
+
+                    exists = run_query(
+                        f"SELECT 1 FROM collected_tweets WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}' LIMIT 1",
+                        fetchone=True
+                    )
+                    if exists:
+                        continue
+
+                    save_collected_tweet(user_id, "custom_one_time", None, tweet_id, tweet_text, created_at, extraction_filter)
+                    run_query(f"UPDATE collected_tweets SET priority = 1 WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}'")
+                    collected += 1
+
+                    await asyncio.sleep(0.05)
+
+        except Exception as e:
+            print(f"❌ Error en custom extract: {e}")
             continue
 
-        prompt = f"Write a tweet based on the following topic: {base_name.replace('_', ' ')}"
-        tweet_text = generate_post_with_openai(prompt, language)
-        # tweet_text = 'Just look at that beautiful sky! Makes you want to get out there and enjoy the day.'
-
-        tweet_id = f"drive-{base_name}"
-        save_collected_tweet_simple(user_id, "drive", None, tweet_id, tweet_text, datetime.now(timezone.utc))
-
-        for file in media_group:
-            file_name = file['name'].replace("'", "''")
-            file_url = file['webViewLink'].replace("'", "''")
-
-            insert_media = (
-                f"INSERT INTO collected_media (tweet_id, user_id, file_name, file_url) "
-                f"VALUES ('{tweet_id}', {user_id}, '{file_name}', '{file_url}')"
-            )
-            run_query(insert_media)
-
-        insert_processed = (
-            f"INSERT INTO drive_media_processed (user_id, drive_link, base_name, created_at) "
-            f"VALUES ({user_id}, '{drive_link}', '{base_name}', NOW())"
-        )
-        run_query(insert_processed)
-
-        print(f"💾 Procesado y guardado: {base_name}")
-        collected_count += 1
-
-    return collected_count
-
-
-
-# JSON
+    return collected

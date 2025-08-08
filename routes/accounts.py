@@ -785,3 +785,133 @@ def send_usage_email():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# --- Custom Extract Jobs ---
+
+@accounts_bp.route("/custom-extracts", methods=["POST"])
+def create_custom_extract_job():
+    """
+    Crea un job 'pending' para el Método 3.
+    Body esperado:
+    {
+      "user_id": 1,
+      "date_from": "2025-07-01 00:00:00",
+      "date_to":   "2025-07-07 23:59:59",
+      "max_items": 2000,
+      "scope":     "users_keywords" | "keywords_only"
+    }
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    user_id = data.get("user_id")
+    date_from = data.get("date_from")
+    date_to = data.get("date_to")
+    max_items = data.get("max_items", 2000)
+    scope = data.get("scope", "users_keywords")
+
+    if not user_id or not date_from or not date_to:
+        return jsonify({"error": "user_id, date_from y date_to son requeridos"}), 400
+
+    if scope not in ("users_keywords", "keywords_only"):
+        return jsonify({"error": "scope inválido"}), 400
+
+    try:
+        # Validación básica de usuario
+        exists = run_query(f"SELECT 1 FROM users WHERE id = {int(user_id)}", fetchone=True)
+        if not exists:
+            return jsonify({"error": "Usuario no encontrado"}), 404
+
+        # Validación de límites
+        try:
+            mi = int(max_items)
+        except Exception:
+            return jsonify({"error": "max_items debe ser entero"}), 400
+        if mi < 1 or mi > 2000:
+            return jsonify({"error": "max_items fuera de rango, 1 a 2000"}), 400
+
+        # Inserción
+        insert_q = f"""
+        INSERT INTO custom_extract_jobs (user_id, date_from, date_to, max_items, scope, status, created_at, updated_at)
+        VALUES ({int(user_id)}, '{date_from}', '{date_to}', {mi}, '{scope}', 'pending', NOW(), NOW())
+        RETURNING id, user_id, date_from, date_to, max_items, scope, status, extracted_count, note, created_at, updated_at
+        """
+        row = run_query(insert_q, fetchone=True)
+        job = {
+            "id": row[0],
+            "user_id": row[1],
+            "date_from": row[2].isoformat() if row[2] else None,
+            "date_to": row[3].isoformat() if row[3] else None,
+            "max_items": row[4],
+            "scope": row[5],
+            "status": row[6],
+            "extracted_count": row[7],
+            "note": row[8],
+            "created_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+        return jsonify(job), 201
+
+    except Exception as e:
+        return jsonify({"error": f"Error creando el job, {str(e)}"}), 500
+
+
+@accounts_bp.route("/custom-extracts/latest", methods=["GET"])
+def get_latest_custom_extract_job():
+    """
+    Devuelve el último job creado para un user_id.
+    Query param requerido: ?user_id=1
+    """
+    try:
+        user_id = request.args.get("user_id", type=int)
+        if not user_id:
+            return jsonify({"error": "user_id es requerido"}), 400
+
+        q = f"""
+        SELECT id, user_id, date_from, date_to, max_items, scope, status, extracted_count, note, created_at, updated_at
+        FROM custom_extract_jobs
+        WHERE user_id = {user_id}
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+        row = run_query(q, fetchone=True)
+        if not row:
+            return jsonify({"message": "No jobs found"}), 200
+
+        job = {
+            "id": row[0],
+            "user_id": row[1],
+            "date_from": row[2].isoformat() if row[2] else None,
+            "date_to": row[3].isoformat() if row[3] else None,
+            "max_items": row[4],
+            "scope": row[5],
+            "status": row[6],
+            "extracted_count": row[7],
+            "note": row[8],
+            "created_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+        return jsonify(job), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Error consultando jobs, {str(e)}"}), 500
+
+
+@accounts_bp.route("/custom-extracts/<int:job_id>", methods=["DELETE"])
+def delete_custom_extract_job(job_id):
+    """
+    Elimina un job solo si está en 'pending'.
+    """
+    try:
+        sel = run_query(f"SELECT status FROM custom_extract_jobs WHERE id = {job_id}", fetchone=True)
+        if not sel:
+            return jsonify({"error": "Job no encontrado"}), 404
+
+        status = sel[0]
+        if status != "pending":
+            return jsonify({"error": "Solo se pueden borrar jobs en estado pending"}), 400
+
+        run_query(f"DELETE FROM custom_extract_jobs WHERE id = {job_id}")
+        return jsonify({"message": "Job borrado"}), 200
+
+    except Exception as e:
+        return jsonify({"error": f"Error borrando job, {str(e)}"}), 500
