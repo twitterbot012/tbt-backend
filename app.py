@@ -13,7 +13,7 @@ from multiprocessing import Manager
 import time
 import os
 from services.db_service import run_query
-import datetime
+from datetime import datetime, timezone
 
 app = Flask(__name__)
 app.config.from_object(Config)
