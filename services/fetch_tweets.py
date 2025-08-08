@@ -17,6 +17,23 @@ import tempfile
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
 
+
+def bump_job_progress(job_id: int, delta: int, note: str = None):
+    safe_note = note.replace("'", "''") if note else None
+    note_sql = f", note = '{safe_note}'" if safe_note is not None else ""
+    # Suma al contador y devuelve total y máximo
+    row = run_query(f"""
+        UPDATE custom_extract_jobs
+        SET extracted_count = COALESCE(extracted_count, 0) + {int(delta)},
+            updated_at = NOW()
+            {note_sql}
+        WHERE id = {int(job_id)}
+        RETURNING extracted_count, max_items
+    """, fetchone=True)
+    if not row:
+        return {"extracted_count": 0, "max_items": 0}
+    return {"extracted_count": row[0], "max_items": row[1]}
+
 def mark_job_running(job_id):
     run_query(f"""
       UPDATE custom_extract_jobs
@@ -24,30 +41,29 @@ def mark_job_running(job_id):
       WHERE id = {job_id}
     """)
 
-def schedule_job_retry(job_id, retries, note=None):
+def schedule_job_retry(job_id: int, next_run_in_minutes: int, retries: int, note: str = None):
     safe_note = note.replace("'", "''") if note else None
     note_sql = f", note = '{safe_note}'" if safe_note is not None else ""
     run_query(f"""
-      UPDATE custom_extract_jobs
-      SET status = 'pending',
-          retries = {retries},
-          next_run_at = NOW() + INTERVAL '1 hour',
-          updated_at = NOW()
-          {note_sql}
-      WHERE id = {job_id}
+        UPDATE custom_extract_jobs
+        SET status = 'pending',
+            retries = {int(retries)},
+            next_run_at = (NOW() AT TIME ZONE 'UTC') + INTERVAL '{int(next_run_in_minutes)} minutes',
+            updated_at = NOW()
+            {note_sql}
+        WHERE id = {int(job_id)}
     """)
 
-def finish_job(job_id, count, note=None):
+def finish_job(job_id: int, note: str = None):
     safe_note = note.replace("'", "''") if note else None
     note_sql = f", note = '{safe_note}'" if safe_note is not None else ""
     run_query(f"""
-      UPDATE custom_extract_jobs
-      SET status = 'done',
-          extracted_count = {count},
-          next_run_at = NULL,
-          updated_at = NOW()
-          {note_sql}
-      WHERE id = {job_id}
+        UPDATE custom_extract_jobs
+        SET status = 'done',
+            next_run_at = NULL,
+            updated_at = NOW()
+            {note_sql}
+        WHERE id = {int(job_id)}
     """)
 
 def get_active_custom_job(user_id):
