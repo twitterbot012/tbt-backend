@@ -399,10 +399,16 @@ async def fetch_tweets_for_monitored_users_with_keywords(session, user_id, monit
             mark_job_running(job["id"])
             extraction_filter = get_extraction_filter(user_id) or "cb1"
 
-            # acá llamás a tu extractor que devuelve 'count'
-            count = await extract_custom_one_time(session, user_id, job, monitored_users, keywords, extraction_filter)
+            count = await extract_custom_one_time(
+                session,
+                user_id,
+                job,
+                monitored_users,
+                keywords,
+                extraction_filter,
+                fetching_event,  
+            )
 
-            # decidir si terminamos o reintentamos
             now_ts = int(time.time())
             date_to_ts = int(job["date_to"].replace(tzinfo=timezone.utc).timestamp()) if job["date_to"] else now_ts
             out_of_window = now_ts > date_to_ts
