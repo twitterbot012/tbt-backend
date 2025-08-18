@@ -31,19 +31,19 @@ def close_db(e=None):
 
 def run_query(query, params=None, fetchone=False, fetchall=False):
     db = get_db()
-
+    
     if params is None:
         params = ()
-    
+        
     try:
-        result = db.run(query, params)
+        result = db.run(query, *params)
 
         if fetchone:
             return result[0] if result else None
         if fetchall:
             return result
-
         return None
+    
     except Exception as e:
         print(f"❌ Error en consulta SQL: {str(e)}")
         return None

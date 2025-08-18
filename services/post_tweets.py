@@ -92,6 +92,8 @@ def upload_media_to_supabase_from_url(url, folder="tweets"):
 
 def delete_from_supabase(path):
     try:
+        if not path:
+            return
         supabase.storage.from_(BUCKET_NAME).remove([path])
         print(f"🗑️ Archivo eliminado de Supabase: {path}")
     except Exception as e:
@@ -143,7 +145,8 @@ def post_tweet(user_id, tweet_text, media_urls=None):
                         media_id = resp.json().get("media_id")
                         if media_id:
                             media_ids.append(media_id)
-                    delete_from_supabase(supabase_path)
+                    if supabase_path:
+                        delete_from_supabase(supabase_path)
                 except Exception as e:
                     print(f"❌ Excepción subiendo media: {e}")
 

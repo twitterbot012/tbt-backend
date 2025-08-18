@@ -70,7 +70,10 @@ def get_rapidapi_key():
 async def get_tweet_limit_per_hour(user_id):
     query = f"SELECT rate_limit FROM users WHERE id = {user_id}"
     result = run_query(query, fetchone=True)
-    return result[0] if result else 10 
+    try:
+        return int(result[0]) if result and result[0] is not None else 10
+    except (ValueError, TypeError):
+        return 10
 
 
 def get_extraction_method(user_id):
@@ -80,27 +83,35 @@ def get_extraction_method(user_id):
 
 
 def get_like_limit_per_hour(user_id):
-    query = f"SELECT likes_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1 
+    result = run_query(f"SELECT likes_limit FROM users WHERE id = {user_id}", fetchone=True)
+    try:
+        return int(result[0]) if result and result[0] is not None else 1
+    except (ValueError, TypeError):
+        return 1
 
 
 def get_comment_limit_per_hour(user_id):
-    query = f"SELECT comments_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1
+    result = run_query(f"SELECT comments_limit FROM users WHERE id = {user_id}", fetchone=True)
+    try:
+        return int(result[0]) if result and result[0] is not None else 1
+    except (ValueError, TypeError):
+        return 1
 
 
 def get_follow_limit_per_hour(user_id):
-    query = f"SELECT follows_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1
+    result = run_query(f"SELECT follows_limit FROM users WHERE id = {user_id}", fetchone=True)
+    try:
+        return int(result[0]) if result and result[0] is not None else 1
+    except (ValueError, TypeError):
+        return 1
 
 
 def get_retweet_limit_per_hour(user_id):
-    query = f"SELECT retweets_limit FROM users WHERE id = {user_id}"
-    result = run_query(query, fetchone=True)
-    return result[0] if result else 1
+    result = run_query(f"SELECT retweets_limit FROM users WHERE id = {user_id}", fetchone=True)
+    try:
+        return int(result[0]) if result and result[0] is not None else 1
+    except (ValueError, TypeError):
+        return 1
 
 
 async def count_tweets_for_user(user_id):
@@ -367,9 +378,8 @@ async def fetch_tweets_for_all_users(fetching_event):
 
     query = "SELECT DISTINCT id FROM users"
     users = run_query(query, fetchall=True)
-    print(users)
 
-    if not users:
+    if not isinstance(users, (list, tuple)) or len(users) == 0:
         print("⚠ No hay usuarios registrados en la base de datos.")
         return
     
@@ -580,7 +590,7 @@ async def run_random_actions(session, user_id, usernames, action_type, limit, se
             
 
             query = f"from:{username} since_time:{since_timestamp}"
-            params = {"query": query, "type": "Latest"}
+            params = {"query": query, "search_type": "Latest"}
             headers_rapid = {
                 "x-rapidapi-key": rapidkey,
                 "x-rapidapi-host": "twitter-api45.p.rapidapi.com",
