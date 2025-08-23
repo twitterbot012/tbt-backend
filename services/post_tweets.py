@@ -174,4 +174,6 @@ def post_tweet(user_id, tweet_text, media_urls=None):
                 print("❌ Error al parsear respuesta del tweet:", tweet_resp.json())
                 return {"error": f"Respuesta inesperada al crear tweet: {e}"}, 500
 
+        print(tweet_resp.status_code)
+        print(tweet_resp)
         return {"error": "No se pudo publicar el tweet"}, tweet_resp.status_code
