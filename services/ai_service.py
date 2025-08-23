@@ -84,9 +84,8 @@ def translate_text_with_openai(text, target_language, custom_style):
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.5,
-                max_tokens=90,
-                n=1
-            )
+                max_tokens=90
+                )
             log_usage("OPENROUTER")
 
             if response.choices and response.choices[0].message.content:
