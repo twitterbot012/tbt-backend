@@ -842,7 +842,7 @@ async def post_tweets_for_user(session, user_id, tweets, posting_event, tweet_li
             else:
                 print(f"❌ No se pudo publicar el tweet: {response.get('error')}")
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(2)  
 
     except asyncio.CancelledError:
         print(f"⏹️ Publicación de tweets cancelada para usuario ID: {user_id}.")
