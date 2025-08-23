@@ -50,18 +50,21 @@ def translate_text_with_openai(text, target_language, custom_style):
         api_key=api_key
     )
 
-    prompt = f"""Translate the following text (not the usernames (@)) into only this language: 
-    {target_language}: '{text}'. {custom_style}. Focus solely on the general message without 
-    adding irrelevant or distracting details or text. NEVER use QUOTATION MARKS. NEVER omit 
-    any links or hashtags from the original text. NEVER PUT PHRASES LIKE THIS OR SIMILAR: 'Sure! Here's the
-    translation:' or 'Here is the translation. Do not remove, edit, or omit any links or hashtags.
-    If you touch even one link or hashtag, your reply will be discarded.
-    Simple: links and hashtags stay exactly as they are.
-    Also remember, always translate to: {target_language} and NEVER add a text that is not a translation 
-    of the original text example.
-    And if the language is already in {target_language}, just give me the original tweet text without aditional text. 
-    Give me less than 240 characters.
+    prompt = f"""Translate the following text (not the usernames (@)) into only this language:
+    {target_language}: '{text}'. {custom_style}
+    OBEY the Rules:
+    - The translation must be under a MAXIMUM of 240 characters
+    - Do not translate usernames (e.g., @username).
+    - Do not use QUOTATION MARKS for the response. 
+    - Do not write out of context other than written in tweet.
+    - Preserve all links and hashtags (if removed, your response will be deleted).
+    - If the text is already in {target_language}, return the original text without changes.
+    - Always translate to: {target_language} 
+    - Output only the translated text. Do not include introductory phrases (Sure! Here's the
+    translation:' or 'Here is the translation etc').
+    -If Text has any symbols/characters that cannot be translated, do not translate, ignore and write the characters that can be translated.
     """
+
 
     models_to_try = [
         "x-ai/grok-4",
@@ -80,7 +83,9 @@ def translate_text_with_openai(text, target_language, custom_style):
                     {"role": "system", "content": "Eres un traductor experto."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.5
+                temperature=0.5,
+                max_tokens=90,
+                n=1
             )
             log_usage("OPENROUTER")
 
