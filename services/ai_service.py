@@ -83,8 +83,8 @@ def translate_text_with_openai(text, target_language, custom_style):
                     {"role": "system", "content": "Eres un traductor experto."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.5,
-                max_tokens=90
+                temperature=0.2,
+                max_tokens=200
                 )
             log_usage("OPENROUTER")
 
