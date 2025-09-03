@@ -11,10 +11,65 @@ import re
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 import json
+from time import monotonic
+import random
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+_TWAPI_LOCK = asyncio.Lock()
+_TWAPI_LAST_CALL = 0.0
+_TWAPI_INTERVAL = 1.2   # 1.2 s entre requests para margen
+TWITTERAPI_URL = "https://api.twitterapi.io/twitter/tweet/advanced_search"
+
+
+def _retry_after_seconds(headers) -> int | None:
+    try:
+        ra = headers.get("Retry-After")
+        return int(ra) if ra is not None else None
+    except Exception:
+        return None
+
+
+async def _twapi_one_request(session, headers, params, timeout=60):
+    """Una sola request, espaciada globalmente."""
+    global _TWAPI_LAST_CALL
+    async with _TWAPI_LOCK:
+        now = monotonic()
+        wait = _TWAPI_INTERVAL - (now - _TWAPI_LAST_CALL)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        async with session.get(TWITTERAPI_URL, headers=headers, params=params, timeout=timeout) as resp:
+            status = resp.status
+            hdrs = resp.headers
+            try:
+                payload = await resp.json()
+            except Exception:
+                payload = None
+        _TWAPI_LAST_CALL = monotonic()
+    return status, hdrs, payload
+
+
+async def twapi_request(session, headers, params, timeout=60, max_retries=4):
+    """Request con backoff si 429, mantiene 1 req/seg global."""
+    attempt = 0
+    while True:
+        status, hdrs, payload = await _twapi_one_request(session, headers, params, timeout=timeout)
+        if status != 429:
+            return status, hdrs, payload
+
+        ra = _retry_after_seconds(hdrs)
+        if ra is not None:
+            print(f"⏳ 429, Retry-After {ra}s")
+            await asyncio.sleep(ra)
+        else:
+            sleep_s = min(60, 1.6 ** attempt) + random.uniform(0, 0.4)
+            print(f"⏳ 429, backoff try {attempt+1}, sleep {sleep_s:.1f}s")
+            await asyncio.sleep(sleep_s)
+        attempt += 1
+        if attempt > max_retries:
+            return status, hdrs, payload
 
 
 def get_google_json():
@@ -251,9 +306,7 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
             print("❌ No se pudo obtener la API Key de TwitterAPI.io.")
             return 0
 
-        headers = {
-            "X-API-Key": api_key
-        }
+        headers = {"X-API-Key": api_key}
 
         combinaciones = list(itertools.product(monitored_users, keywords))
         since_str = _format_since_for_twitterapi_io(since_timestamp)
@@ -296,68 +349,58 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
                 }
 
                 try:
-                    async with session.get(
-                        "https://api.twitterapi.io/twitter/tweet/advanced_search",
-                        headers=headers,
-                        params=params,
+                    # usa helper con lock global y backoff para 429
+                    status, hdrs, payload = await twapi_request(
+                        session,
+                        headers,
+                        params,
                         timeout=60
-                    ) as resp:
-                        if resp.status != 200:
-                            print(resp)
-                            print(f"❌ Error {resp.status} en TwitterAPI.io para: {query} cursor={cursor}")
-                            log_usage("TWITTERAPI.IO", count=1)
-                            break
+                    )
 
-                        try:
-                            payload = await resp.json()
-                        except Exception as e:
-                            print(f"❌ Error parseando JSON TwitterAPI.io para {query}: {e}")
-                            log_usage("TWITTERAPI.IO", count=1)
-                            break
+                    if status != 200:
+                        print(f"❌ Error {status} en TwitterAPI.io para: {query} cursor={cursor}")
+                        log_usage("TWITTERAPI.IO", count=1)
+                        break
 
-                        tweets = payload.get("tweets", []) or []
-                        has_next = payload.get("has_next_page", False)
-                        next_cursor = payload.get("next_cursor", "")
+                    tweets = (payload or {}).get("tweets", []) or []
+                    has_next = (payload or {}).get("has_next_page", False)
+                    next_cursor = (payload or {}).get("next_cursor", "")
 
-                        log_usage("TWITTERAPI.IO", count=len(tweets))
+                    log_usage("TWITTERAPI.IO", count=len(tweets))
 
-                        if not tweets:
-                            # No hay resultados en esta página
-                            break
+                    if not tweets:
+                        # página vacía, cortar paginación de esta combinación
+                        break
 
-                        for t in tweets:
-                            if fetching_event.is_set() or collected_count >= limit:
-                                return collected_count
+                    for t in tweets:
+                        if fetching_event.is_set() or collected_count >= limit:
+                            return collected_count
 
-                            tweet_id = t.get("id")
-                            tweet_text = t.get("text")
-                            created_at = t.get("createdAt")
+                        tweet_id = t.get("id")
+                        tweet_text = t.get("text")
+                        created_at = t.get("createdAt")
 
-                            save_collected_tweet(
-                                user_id,
-                                "combined",
-                                None,
-                                tweet_id,
-                                tweet_text,
-                                created_at,
-                                extraction_filter,
-                            )
-                            collected_count += 1
+                        save_collected_tweet(
+                            user_id,
+                            "combined",
+                            None,
+                            tweet_id,
+                            tweet_text,
+                            created_at,
+                            extraction_filter,
+                        )
+                        collected_count += 1
 
-                        # 👉 pausa 1 seg DESPUÉS de procesar la página
-                        await asyncio.sleep(1)
+                    if not has_next or not next_cursor:
+                        break
 
-                        if not has_next or not next_cursor:
-                            break
-                        
-                        cursor = next_cursor  # siguiente página
+                    cursor = next_cursor  # siguiente página
 
                 except Exception as e:
                     print(f"❌ Excepción consultando TwitterAPI.io para {query}: {e}")
                     break
 
         return collected_count
-
 
     # ======== DEFAULT, API NO RECONOCIDA ========
     else:
@@ -460,7 +503,7 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
         print(f"🎯 Extracción completa. Total tweets: {collected_count}/{limit}")
         return collected_count
 
-    # ========== TWITTERAPI.IO ==========
+   # ========== TWITTERAPI.IO ==========
     elif search_api == "TWITTERAPI.IO":
         api_key = get_twitterapi_key()
         if not api_key:
@@ -506,63 +549,52 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
                 }
 
                 try:
-                    async with session.get(
-                        "https://api.twitterapi.io/twitter/tweet/advanced_search",
+                    # usa helper con lock global y backoff para 429
+                    status, hdrs, payload = await twapi_request(
+                        session=session,
                         headers=headers,
                         params=params,
                         timeout=60
-                    ) as resp:
-                        if resp.status != 200:
-                            print(resp)
-                            print(f"❌ Error {resp.status} en TwitterAPI.io para @{username}, cursor={cursor}")
-                            log_usage("TWITTERAPI.IO", count=1)
-                            break
+                    )
 
-                        try:
-                            payload = await resp.json()
-                        except Exception as e:
-                            print(f"❌ Error parseando JSON para @{username}: {e}")
-                            log_usage("TWITTERAPI.IO", count=1)
-                            break
+                    if status != 200:
+                        print(f"❌ Error {status} en TwitterAPI.io para @{username}, cursor={cursor}")
+                        log_usage("TWITTERAPI.IO", count=1)
+                        break
 
-                        tweets = payload.get("tweets", []) or []
-                        has_next = payload.get("has_next_page", False)
-                        next_cursor = payload.get("next_cursor", "")
+                    tweets = (payload or {}).get("tweets", []) or []
+                    has_next = (payload or {}).get("has_next_page", False)
+                    next_cursor = (payload or {}).get("next_cursor", "")
 
-                        log_usage("TWITTERAPI.IO", count=len(tweets))
+                    log_usage("TWITTERAPI.IO", count=len(tweets))
 
-                        if not tweets:
-                            print(f"⚠️ No se encontraron tweets para @{username} en esta página")
-                            # igual aplicamos la pausa para respetar 1 req/seg
-                            await asyncio.sleep(1)
-                            break
+                    if not tweets:
+                        print(f"⚠️ No se encontraron tweets para @{username} en esta página")
+                        break
 
-                        for t in tweets:
-                            if fetching_event.is_set() or collected_count >= limit:
-                                return collected_count
+                    for t in tweets:
+                        if fetching_event.is_set() or collected_count >= limit:
+                            return collected_count
 
-                            tweet_id = t.get("id")
-                            tweet_text = t.get("text")
-                            created_at = t.get("createdAt")
+                        tweet_id = t.get("id")
+                        tweet_text = t.get("text")
+                        created_at = t.get("createdAt")
 
-                            save_collected_tweet(
-                                user_id,
-                                "full_account_copy",
-                                username,
-                                tweet_id,
-                                tweet_text,
-                                created_at,
-                                extraction_filter
-                            )
-                            collected_count += 1
-                            print(f"💾 Tweet guardado de @{username}: {tweet_id}")
+                        save_collected_tweet(
+                            user_id,
+                            "full_account_copy",
+                            username,
+                            tweet_id,
+                            tweet_text,
+                            created_at,
+                            extraction_filter
+                        )
+                        collected_count += 1
+                        print(f"💾 Tweet guardado de @{username}: {tweet_id}")
 
-                        # pausa de 1 segundo por página solicitada
-                        await asyncio.sleep(1)
-
-                        if not has_next or not next_cursor:
-                            break
-                        cursor = next_cursor
+                    if not has_next or not next_cursor:
+                        break
+                    cursor = next_cursor
 
                 except Exception as e:
                     print(f"❌ Excepción consultando TwitterAPI.io para @{username}: {e}")
@@ -570,6 +602,7 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
 
         print(f"🎯 Extracción completa. Total tweets: {collected_count}/{limit}")
         return collected_count
+
 
 
     # ========== DEFAULT ==========
