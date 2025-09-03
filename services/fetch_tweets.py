@@ -342,11 +342,11 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
                                 extraction_filter,
                             )
                             collected_count += 1
-                            await asyncio.sleep(0.1)
+                            await asyncio.sleep(1)
 
                         if not has_next or not next_cursor:
                             break
-
+                        
                         cursor = next_cursor  # siguiente página
 
                 except Exception as e:
@@ -550,7 +550,7 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
                             )
                             collected_count += 1
                             print(f"💾 Tweet guardado de @{username}: {tweet_id}")
-                            await asyncio.sleep(0.1)
+                            await asyncio.sleep(1)
 
                         if not has_next or not next_cursor:
                             break
