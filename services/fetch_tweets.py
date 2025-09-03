@@ -20,7 +20,12 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 _TWAPI_LOCK = asyncio.Lock()
 _TWAPI_LAST_CALL = 0.0
-_TWAPI_INTERVAL = 1.2   # 1.2 s entre requests para margen
+_TWAPI_INTERVAL = 2.2   # más margen por Cloudflare
+_TWAPI_429_STREAK = 0
+_TWAPI_429_STREAK_FOR_COOLDOWN = 2
+_TWAPI_COOLDOWN_429 = 60
+_TWAPI_JITTER_MIN = 0.05
+_TWAPI_JITTER_MAX = 0.25
 TWITTERAPI_URL = "https://api.twitterapi.io/twitter/tweet/advanced_search"
 
 
@@ -31,15 +36,16 @@ def _retry_after_seconds(headers) -> int | None:
     except Exception:
         return None
 
-
 async def _twapi_one_request(session, headers, params, timeout=60):
-    """Una sola request, espaciada globalmente."""
     global _TWAPI_LAST_CALL
     async with _TWAPI_LOCK:
         now = monotonic()
         wait = _TWAPI_INTERVAL - (now - _TWAPI_LAST_CALL)
         if wait > 0:
             await asyncio.sleep(wait)
+        # jitter leve para no caer en bordes de ventana
+        await asyncio.sleep(random.uniform(_TWAPI_JITTER_MIN, _TWAPI_JITTER_MAX))
+
         async with session.get(TWITTERAPI_URL, headers=headers, params=params, timeout=timeout) as resp:
             status = resp.status
             hdrs = resp.headers
@@ -47,28 +53,40 @@ async def _twapi_one_request(session, headers, params, timeout=60):
                 payload = await resp.json()
             except Exception:
                 payload = None
+
         _TWAPI_LAST_CALL = monotonic()
     return status, hdrs, payload
 
-
-async def twapi_request(session, headers, params, timeout=60, max_retries=4):
-    """Request con backoff si 429, mantiene 1 req/seg global."""
+async def twapi_request(session, headers, params, timeout=60, max_retries=6):
+    """Rate limit global, Retry-After, backoff exponencial con cooldown por racha."""
+    global _TWAPI_429_STREAK
     attempt = 0
     while True:
         status, hdrs, payload = await _twapi_one_request(session, headers, params, timeout=timeout)
         if status != 429:
+            _TWAPI_429_STREAK = 0
             return status, hdrs, payload
 
+        _TWAPI_429_STREAK += 1
+
         ra = _retry_after_seconds(hdrs)
-        if ra is not None:
+        if ra and ra > 0:
             print(f"⏳ 429, Retry-After {ra}s")
             await asyncio.sleep(ra)
         else:
-            sleep_s = min(60, 1.6 ** attempt) + random.uniform(0, 0.4)
+            base, factor, cap = 2.2, 2.0, 120
+            sleep_s = min(cap, base * (factor ** attempt)) + random.uniform(0, 0.6)
             print(f"⏳ 429, backoff try {attempt+1}, sleep {sleep_s:.1f}s")
             await asyncio.sleep(sleep_s)
+
+        if _TWAPI_429_STREAK >= _TWAPI_429_STREAK_FOR_COOLDOWN:
+            print(f"🧊 Cooldown global por racha de 429, {_TWAPI_COOLDOWN_429}s")
+            await asyncio.sleep(_TWAPI_COOLDOWN_429)
+            _TWAPI_429_STREAK = 0
+
         attempt += 1
         if attempt > max_retries:
+            print("🚫 429 persistente, abandono esta página")
             return status, hdrs, payload
 
 
@@ -205,7 +223,7 @@ def _format_since_for_twitterapi_io(ts_unix: int) -> str:
 
 
 async def extract_by_combination(session, user_id, monitored_users, keywords, limit, fetching_event):
-    since_timestamp = int(time.time()) - 4 * 60 * 60
+    since_timestamp = int(time.time()) - 4 * 60 * 60 - 60
     collected_count = 0
 
     search_api = (get_search_api() or "RAPIDAPI").upper().strip()
@@ -413,7 +431,7 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
 
 
 async def extract_by_copy_user(session, user_id, monitored_users, limit, fetching_event):
-    since_timestamp = int(time.time()) - 4 * 60 * 60
+    since_timestamp = int(time.time()) - 4 * 60 * 60 - 60
     collected_count = 0
 
     search_api = (get_search_api() or "RAPIDAPI").upper().strip()
