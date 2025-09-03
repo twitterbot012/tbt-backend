@@ -306,7 +306,11 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
             print("❌ No se pudo obtener la API Key de TwitterAPI.io.")
             return 0
 
-        headers = {"X-API-Key": api_key}
+        headers = {
+            "X-API-Key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "twitter-bot/1.0"
+        }
 
         combinaciones = list(itertools.product(monitored_users, keywords))
         since_str = _format_since_for_twitterapi_io(since_timestamp)
@@ -510,7 +514,11 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
             print("❌ No se pudo obtener la API Key de TwitterAPI.io.")
             return 0
 
-        headers = {"X-API-Key": api_key}
+        headers = {
+            "X-API-Key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "twitter-bot/1.0"
+        }
         since_str = _format_since_for_twitterapi_io(since_timestamp)
 
         for username in monitored_users:
