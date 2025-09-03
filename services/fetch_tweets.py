@@ -303,6 +303,7 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
                         timeout=60
                     ) as resp:
                         if resp.status != 200:
+                            print(resp)
                             print(f"❌ Error {resp.status} en TwitterAPI.io para: {query} cursor={cursor}")
                             log_usage("TWITTERAPI.IO", count=1)
                             break
@@ -510,6 +511,7 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
                         timeout=60
                     ) as resp:
                         if resp.status != 200:
+                            print(resp)
                             print(f"❌ Error {resp.status} en TwitterAPI.io para @{username}, cursor={cursor}")
                             log_usage("TWITTERAPI.IO", count=1)
                             break
