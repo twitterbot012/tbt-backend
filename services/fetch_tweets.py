@@ -284,7 +284,7 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
             print(f"🔎 Consultando: {query}")
 
             cursor = ""
-            # Nota, cada página devuelve hasta 20 tweets, usamos cursor hasta que se corte por límite, no haya más páginas, o se pida detener
+            # Cada página devuelve hasta 20 tweets
             while True:
                 if fetching_event.is_set() or collected_count >= limit:
                     return collected_count
@@ -322,7 +322,7 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
                         log_usage("TWITTERAPI.IO", count=len(tweets))
 
                         if not tweets:
-                            # No hay resultados en esta página, cortamos paginación
+                            # No hay resultados en esta página
                             break
 
                         for t in tweets:
@@ -343,7 +343,9 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
                                 extraction_filter,
                             )
                             collected_count += 1
-                            await asyncio.sleep(1)
+
+                        # 👉 pausa 1 seg DESPUÉS de procesar la página
+                        await asyncio.sleep(1)
 
                         if not has_next or not next_cursor:
                             break
@@ -352,10 +354,10 @@ async def extract_by_combination(session, user_id, monitored_users, keywords, li
 
                 except Exception as e:
                     print(f"❌ Excepción consultando TwitterAPI.io para {query}: {e}")
-                    # Rompemos la paginación de esta combinación y seguimos con la siguiente
                     break
 
         return collected_count
+
 
     # ======== DEFAULT, API NO RECONOCIDA ========
     else:
@@ -531,6 +533,8 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
 
                         if not tweets:
                             print(f"⚠️ No se encontraron tweets para @{username} en esta página")
+                            # igual aplicamos la pausa para respetar 1 req/seg
+                            await asyncio.sleep(1)
                             break
 
                         for t in tweets:
@@ -552,7 +556,9 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
                             )
                             collected_count += 1
                             print(f"💾 Tweet guardado de @{username}: {tweet_id}")
-                            await asyncio.sleep(1)
+
+                        # pausa de 1 segundo por página solicitada
+                        await asyncio.sleep(1)
 
                         if not has_next or not next_cursor:
                             break
@@ -564,6 +570,7 @@ async def extract_by_copy_user(session, user_id, monitored_users, limit, fetchin
 
         print(f"🎯 Extracción completa. Total tweets: {collected_count}/{limit}")
         return collected_count
+
 
     # ========== DEFAULT ==========
     else:
