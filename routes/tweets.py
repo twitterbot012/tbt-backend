@@ -196,8 +196,8 @@ def set_provider_source():
 
     existing = run_query("SELECT 1 FROM global_config WHERE id = 1", fetchone=True)
     if existing:
-        run_query("UPDATE global_config SET value = %s WHERE id = 1", params=(value,))
+        run_query(f"UPDATE global_config SET value = '{value}' WHERE id = 1")
     else:
-        run_query("INSERT INTO global_config (id, value) VALUES (1, %s)", params=(value,))
+        run_query(f"INSERT INTO global_config (id, value) VALUES (1, '{value}')")
 
     return jsonify({"value": value}), 200
