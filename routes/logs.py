@@ -106,6 +106,8 @@ def update_api_key():
             updates.append((2, data["socialdata"]))
         if "rapidapi" in data:
             updates.append((3, data["rapidapi"]))
+        if "twitterapi.io" in data:
+            updates.append((4, data["twitterapi"]))
 
         if not updates:
             return jsonify({"error": "No se proporcionaron claves para actualizar"}), 400
