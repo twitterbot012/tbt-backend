@@ -174,3 +174,30 @@ def update_tweet_priority(tweet_id):
     """
     run_query(query)
     return jsonify({"message": f"Prioridad actualizada a {new_priority}"}), 200
+
+
+@tweets_bp.route("/provider-source", methods=["GET"])
+def get_provider_source():
+    row = run_query("SELECT value FROM global_config WHERE id = 1", fetchone=True)
+    current = (row[0] if row else "").strip().upper()
+    if current not in ("RAPIDAPI", "TWITTERAPI.IO"):
+        current = "RAPIDAPI"
+    return jsonify({"value": current}), 200
+
+
+@tweets_bp.route("/provider-source", methods=["PUT"])
+def set_provider_source():
+    data = request.get_json(silent=True) or {}
+    value = str(data.get("value", "")).strip().upper()
+
+    allowed = {"RAPIDAPI", "TWITTERAPI.IO"}
+    if value not in allowed:
+        return jsonify({"error": "Valor inválido, use RAPIDAPI o TWITTERAPI.IO"}), 400
+
+    existing = run_query("SELECT 1 FROM global_config WHERE id = 1", fetchone=True)
+    if existing:
+        run_query("UPDATE global_config SET value = %s WHERE id = 1", params=(value,))
+    else:
+        run_query("INSERT INTO global_config (id, value) VALUES (1, %s)", params=(value,))
+
+    return jsonify({"value": value}), 200
