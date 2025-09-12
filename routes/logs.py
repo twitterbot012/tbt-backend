@@ -106,8 +106,8 @@ def update_api_key():
             updates.append((2, data["socialdata"]))
         if "rapidapi" in data:
             updates.append((3, data["rapidapi"]))
-        if "twitterapi.io" in data:
-            updates.append((4, data["twitterapi"]))
+        if "twitterapi" in data:
+            updates.append((5, data["twitterapi"]))
 
         if not updates:
             return jsonify({"error": "No se proporcionaron claves para actualizar"}), 400
@@ -126,13 +126,14 @@ def update_api_key():
 @logs_bp.route("/api-keys", methods=["GET"])
 def get_api_keys():
     try:
-        query = "SELECT id, key FROM api_keys WHERE id IN (1, 2, 3)"
+        query = "SELECT id, key FROM api_keys WHERE id IN (1, 2, 3, 5)"
         keys = run_query(query, fetchall=True)
 
         keys_dict = {
             "openrouter": keys[0][1] if len(keys) > 0 else "",
             "socialdata": keys[1][1] if len(keys) > 1 else "",
-            "rapidapi": keys[2][1] if len(keys) > 2 else ""
+            "rapidapi": keys[2][1] if len(keys) > 2 else "",
+            "twitterapi": keys[3][1] if len(keys) > 3 else ""
         }
 
         return jsonify(keys_dict), 200
