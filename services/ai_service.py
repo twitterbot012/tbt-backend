@@ -10,6 +10,7 @@ from langdetect import detect, DetectorFactory
 
 DetectorFactory.seed = 0
 
+
 LANG_NAME_TO_CODE = {
     "afrikaans": "af", "albanian": "sq", "arabic": "ar", "armenian": "hy", "azerbaijani": "az", "basque": "eu",
     "belarusian": "be", "bengali": "bn", "bosnian": "bs", "bulgarian": "bg", "catalan": "ca", "chinese": "zh",
