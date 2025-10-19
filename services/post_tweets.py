@@ -8,6 +8,7 @@ from supabase import create_client
 import httpx
 import mimetypes
 import re
+from utils.logs import now_hhmm
 
 logging.basicConfig(level=logging.INFO)
 
@@ -107,11 +108,11 @@ def post_tweet(user_id, tweet_text, media_urls=None):
 
     extraction_filter = get_extraction_filter(user_id)
     if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" in tweet_text:
-        result = run_query(f"SELECT session FROM users WHERE id = {user_id}", fetchone=True)
+        result = run_query(f"SELECT session, username FROM users WHERE id = {user_id}", fetchone=True)
         if not result:
-            return {"error": "Usuario no encontrado"}, 404
+            return {"error": "User not found"}, 404
 
-        session = result[0]
+        session, username = result[0], (result[1] or "").strip()
         rapidapi_key = get_rapidapi_key()
         if not rapidapi_key:
             return {"error": "No se pudo obtener la API Key de RapidAPI"}, 500
@@ -168,7 +169,10 @@ def post_tweet(user_id, tweet_text, media_urls=None):
                 tweet_data = tweet_resp.json()["data"]["create_tweet"]["tweet_result"]["result"]
                 tweet_id = tweet_data["rest_id"]
                 tweet_url = f"https://twitter.com/{tweet_data['core']['user_result']['result']['legacy']['screen_name']}/status/{tweet_id}"
-                return {"message": "Tweet publicado exitosamente", "tweet_id": tweet_id, "tweet_url": tweet_url}, 200
+                handle = f"@{username}" if (username) else "<unknown>"
+                log_event(user_id, "POSTED", f"{handle} posted 1 post at {now_hhmm()}, no failures")
+
+                return {"message": "Tweet posted successfully", "tweet_id": tweet_id, "tweet_url": tweet_url}, 200
 
             except KeyError as e:
                 print("❌ Error al parsear respuesta del tweet:", tweet_resp.json())

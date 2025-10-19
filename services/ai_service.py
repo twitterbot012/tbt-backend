@@ -392,7 +392,7 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
     else:
         translated_text = translate_text_with_openai(tweet_text, target_language, custom_style)
         if not translated_text:
-            print(f"❌ No se pudo traducir el tweet {tweet_id}. No se guardará.")
+            print(f"❌ Can't translate tweet: {tweet_id}.")
             return
 
         print(f"🌐 Tweet traducido al idioma '{target_language}': {translated_text}")
@@ -412,7 +412,7 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
                 '{created_at}')
                 """
         run_query(insert_query)
-        print(f"✅ Tweet {tweet_id} guardado correctamente.")
+        print(f"✅ Tweet {tweet_id} saved successfully.")
 
         update_query = f"""
         UPDATE collected_tweets
@@ -429,7 +429,7 @@ def save_collected_tweet(user_id, source_type, source_value, tweet_id, tweet_tex
         VALUES ({user_id}, 'EXTRACT', '{event_description.replace("'", "''")}', NOW())
         """
         run_query(event_query)
-        print(f"📝 Evento EXTRACT guardado para tweet {tweet_id}.")
+        print(f"📝 Event EXTRACT saved for tweet {tweet_id}.")
 
 
 

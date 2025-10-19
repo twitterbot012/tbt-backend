@@ -12,6 +12,8 @@ from services.fetch_tweets import fetch_tweets_for_all_users, fetch_tweets_for_s
 from multiprocessing import Manager
 import time
 import os
+from services.db_service import log_event
+from utils.logs import now_hhmm
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -116,61 +118,59 @@ def start_tweet_poster():
 
 def start_tweet_service():
     """
-    Inicia el servicio continuo de recolección y publicación de tweets
+    Starts the continuous tweet collection and posting service
     """
-    print('🚀 Iniciando el servicio continuo de recolección y publicación de tweets...')
+    print('🚀 Starting continuous tweet service...')
 
     async def service_loop():
         with app.app_context():
             while not fetching_event.is_set():
                 try:
-                    # --- FETCH ---
-                    print("🔎 Iniciando recolección de tweets...")
+                    # a) BATCH start
+                    log_event(None, "BATCH", f"start at {now_hhmm()}")
+
+                    # --- FETCH (no extraction logs requested) ---
+                    print("🔎 Starting fetch...")
                     fetch_task = asyncio.create_task(fetch_tweets_for_all_users(fetching_event))
                     await fetch_task
-
                     if fetching_event.is_set():
                         break
 
-                    print("✅ Recolección completada. Iniciando publicación...")
+                    print("✅ Fetch complete. Starting posting...")
 
-                    # --- POST ---
+                    # --- POST (posting logs will be inside post_tweet) ---
                     post_task = asyncio.create_task(post_tweets_for_all_users(fetching_event))
                     await post_task
-
                     if fetching_event.is_set():
                         break
 
-                    print("✅ Recolección completada. Iniciando random actions...")
+                    print("✅ Posting complete. Starting random actions...")
 
-                    # --- FETCH ---
-                    print("🔎 Iniciando random actions...")
+                    # --- RANDOM ACTIONS (no specific logs requested) ---
                     random_task = asyncio.create_task(fetch_random_tasks_for_all_users(fetching_event))
                     await random_task
-
                     if fetching_event.is_set():
                         break
 
-                    print("⏳ Ciclo completo. Esperando 4 horas antes de reiniciar...")
+                    # d) BATCH end
+                    log_event(None, "BATCH", f"end at {now_hhmm()}")
 
-                    for _ in range(14400):
+                    print("⏳ Full cycle done. Waiting 4 hours before restart...")
+                    for _ in range(4 * 60 * 60):
                         if fetching_event.is_set():
                             break
-                        time.sleep(1)
+                        await asyncio.sleep(1)  # non-blocking
 
                 except asyncio.CancelledError:
-                    print("⏹️ Servicio cancelado por solicitud de detención.")
+                    print("⏹️ Service cancelled by stop request.")
+                    log_event(None, "BATCH", f"end at {now_hhmm()}")
                     break
                 except Exception as e:
-                    print(f"❌ Error en service_loop: {e}")
+                    print(f"❌ Error in service_loop: {e}")
+                    log_event(None, "BATCH", f"end at {now_hhmm()}")
                     break
 
-        print("⏹️ Servicio continuo detenido.")
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(service_loop())
-    loop.close()
+        print("⏹️ Continuous service stopped.")
     
     
 @app.route("/start-fetch", methods=["POST"])
