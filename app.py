@@ -123,40 +123,49 @@ def start_tweet_service():
     print('🚀 Starting continuous tweet service...')
 
     async def service_loop():
+        last_fetch_ts = 0.0
+        last_random_ts = 0.0
         with app.app_context():
             while not fetching_event.is_set():
                 try:
-                    # a) BATCH start
-                    log_event(None, "BATCH", f"start at {now_hhmm()}")
+                    do_fetch = (last_fetch_ts == 0.0) or ((time.time() - last_fetch_ts) >= 6 * 60 * 60)
+                    do_random = (last_random_ts == 0.0) or ((time.time() - last_random_ts) >= 6 * 60 * 60)
 
-                    # --- FETCH (no extraction logs requested) ---
-                    print("🔎 Starting fetch...")
-                    fetch_task = asyncio.create_task(fetch_tweets_for_all_users(fetching_event))
-                    await fetch_task
-                    if fetching_event.is_set():
-                        break
+                    if do_fetch or do_random:
+                        log_event(None, "BATCH", f"start at {now_hhmm()}")
 
-                    print("✅ Fetch complete. Starting posting...")
+                    # --- FETCH cada 6h ---
+                    if do_fetch:
+                        print("🔎 Starting fetch (6h window)...")
+                        fetch_task = asyncio.create_task(fetch_tweets_for_all_users(fetching_event))
+                        await fetch_task
+                        if fetching_event.is_set():
+                            break
+                        last_fetch_ts = time.time()
+                        print("✅ Fetch complete.")
 
-                    # --- POST (posting logs will be inside post_tweet) ---
+                    # --- POST continuo (reparte dentro de la franja) ---
                     post_task = asyncio.create_task(post_tweets_for_all_users(fetching_event))
                     await post_task
                     if fetching_event.is_set():
                         break
+                    print("✅ Posting cycle complete.")
 
-                    print("✅ Posting complete. Starting random actions...")
+                    # --- RANDOM ACTIONS cada 6h ---
+                    if do_random:
+                        print("🎲 Starting random actions (6h window)...")
+                        random_task = asyncio.create_task(fetch_random_tasks_for_all_users(fetching_event))
+                        await random_task
+                        if fetching_event.is_set():
+                            break
+                        last_random_ts = time.time()
+                        print("✅ Random actions complete.")
 
-                    # --- RANDOM ACTIONS (no specific logs requested) ---
-                    random_task = asyncio.create_task(fetch_random_tasks_for_all_users(fetching_event))
-                    await random_task
-                    if fetching_event.is_set():
-                        break
+                    if do_fetch or do_random:
+                        log_event(None, "BATCH", f"end at {now_hhmm()}")
 
-                    # d) BATCH end
-                    log_event(None, "BATCH", f"end at {now_hhmm()}")
-
-                    print("⏳ Full cycle done. Waiting 4 hours before restart...")
-                    for _ in range(4 * 60 * 60):
+                    print("⏳ Full cycle done. Waiting 60s before restart...")
+                    for _ in range(60):
                         if fetching_event.is_set():
                             break
                         await asyncio.sleep(1)  # non-blocking
@@ -299,18 +308,24 @@ def start_service_for_user(user_id, process_event):
     print(f'🚀 Iniciando servicio de FETCH + POST para usuario ID: {user_id}...')
 
     async def service_loop():
+        last_fetch_ts = 0.0
+        last_random_ts = 0.0
         with app.app_context():
             while not process_event.is_set():
                 try:
-                    # --- FETCH ---
-                    print(f"🔎 Extrayendo tweets para usuario ID: {user_id}...")
-                    fetch_task = asyncio.create_task(fetch_tweets_for_single_user(user_id, process_event))
-                    await fetch_task
+                    do_fetch = (last_fetch_ts == 0.0) or ((time.time() - last_fetch_ts) >= 6 * 60 * 60)
+                    do_random = (last_random_ts == 0.0) or ((time.time() - last_random_ts) >= 6 * 60 * 60)
 
-                    if process_event.is_set():
-                        break
+                    # --- FETCH cada 6h ---
+                    if do_fetch:
+                        print(f"🔎 Extrayendo tweets para usuario ID: {user_id} (6h)...")
+                        fetch_task = asyncio.create_task(fetch_tweets_for_single_user(user_id, process_event))
+                        await fetch_task
+                        if process_event.is_set():
+                            break
+                        last_fetch_ts = time.time()
 
-                    # --- POST ---
+                    # --- POST continuo ---
                     print(f"📢 Publicando tweets para usuario ID: {user_id}...")
                     post_task = asyncio.create_task(post_tweets_for_single_user(user_id, process_event))
                     await post_task
@@ -318,19 +333,20 @@ def start_service_for_user(user_id, process_event):
                     if process_event.is_set():
                         break
 
-                    # --- RANDOM ---
-                    print(f"📢 Random actions para usuario ID: {user_id}...")
-                    random_task = asyncio.create_task(fetch_random_tasks_for_user(user_id, process_event))
-                    await random_task
-
-                    if process_event.is_set():
-                        break
-
-                    print(f"⏳ Ciclo completo para usuario {user_id}. Esperando 4 horas antes de reiniciar...")
-                    for _ in range(14400):  # Espera de 1 hora (ajustable)
+                    # --- RANDOM cada 6h ---
+                    if do_random:
+                        print(f"📢 Random actions para usuario ID: {user_id} (6h)...")
+                        random_task = asyncio.create_task(fetch_random_tasks_for_user(user_id, process_event))
+                        await random_task
                         if process_event.is_set():
                             break
-                        time.sleep(1)
+                        last_random_ts = time.time()
+
+                    print(f"⏳ Ciclo completo para usuario {user_id}. Esperando 60s antes de reiniciar...")
+                    for _ in range(60):
+                        if process_event.is_set():
+                            break
+                        await asyncio.sleep(1)
 
                 except asyncio.CancelledError:
                     print(f"⏹️ Servicio cancelado para usuario ID: {user_id}.")

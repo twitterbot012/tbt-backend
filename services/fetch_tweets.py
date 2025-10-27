@@ -2,7 +2,7 @@ import asyncio
 import aiohttp
 from services.db_service import run_query, log_event
 from services.ai_service import save_collected_tweet, generate_reply_with_openai, generate_post_with_openai, save_collected_tweet_simple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from services.post_tweets import post_tweet
 import time
 from routes.logs import log_usage
@@ -1079,66 +1079,127 @@ async def post_tweets_for_single_user(user_id, posting_event):
         print(f"⏹️ Proceso detenido para usuario ID: {user_id}.")
         return
 
-    tweet_limit = await get_tweet_limit_per_hour(user_id)
-    tweets_posted_last_hour = await count_tweets_for_user(user_id)
+    # Límites
+    MAX_DAILY_POSTS = 100
+    MAX_WINDOW_POSTS = 10  # 6-hour window
 
-    if tweets_posted_last_hour >= tweet_limit:
-        print(f"⛔ Usuario {user_id} alcanzó el límite de {tweet_limit} tweets por hora. Saltando publicación.")
+    # Guardrail horario actual
+    tweet_limit_hour = await get_tweet_limit_per_hour(user_id)
+    tweets_posted_last_hour = await count_tweets_for_user(user_id)
+    if tweets_posted_last_hour >= tweet_limit_hour:
+        print(f"⛔ Usuario {user_id} alcanzó el límite de {tweet_limit_hour} tweets por hora. Saltando publicación.")
         return
 
+    # Conteo diario
+    posted_today_row = run_query(
+        f"""
+        SELECT COUNT(*) FROM posted_tweets
+        WHERE user_id = '{user_id}'
+          AND created_at >= date_trunc('day', NOW())
+        """,
+        fetchone=True,
+    )
+    posted_today = posted_today_row[0] if posted_today_row else 0
+    if posted_today >= MAX_DAILY_POSTS:
+        print(f"⛔ Usuario {user_id} alcanzó el límite diario de {MAX_DAILY_POSTS}.")
+        return
+
+    # Conteo franja actual (0-6, 6-12, 12-18, 18-24)
+    posted_in_window_row = run_query(
+        f"""
+        SELECT COUNT(*) FROM posted_tweets
+        WHERE user_id = '{user_id}'
+          AND created_at >= (date_trunc('day', NOW()) + (floor(extract(hour from NOW())/6) * interval '6 hours'))
+          AND created_at <  (date_trunc('day', NOW()) + (floor(extract(hour from NOW())/6) * interval '6 hours') + interval '6 hours')
+        """,
+        fetchone=True,
+    )
+    posted_in_window = posted_in_window_row[0] if posted_in_window_row else 0
+    if posted_in_window >= MAX_WINDOW_POSTS:
+        print(f"⛔ Usuario {user_id} alcanzó el tope de {MAX_WINDOW_POSTS} en la franja actual.")
+        return
+
+    # Cargar candidatos (no todos) y publicar solo 1 para distribuir
     query_tweets = f"""
         SELECT tweet_id, tweet_text
         FROM collected_tweets
         WHERE user_id = '{user_id}' AND priority = 1
+        LIMIT 50
     """
     tweets_to_post = run_query(query_tweets, fetchall=True) or []
-
     if not tweets_to_post:
         print(f"⚠ Usuario {user_id} no tiene tweets pendientes de publicación.")
         return
 
-    async with aiohttp.ClientSession() as session:
-        for tweet_id, tweet_text in tweets_to_post:
-            if posting_event.is_set():
-                print(f"⏹️ Proceso detenido mientras se publicaban tweets.")
-                break
+    # Calcular espaciado dentro de la franja restante
+    now_utc = datetime.now(timezone.utc)
+    current_bucket = now_utc.hour // 6
+    window_start = now_utc.replace(hour=current_bucket * 6, minute=0, second=0, microsecond=0)
+    window_end = window_start + timedelta(hours=6)
 
-            tweets_posted_last_hour = await count_tweets_for_user(user_id)
-            if tweets_posted_last_hour >= tweet_limit:
-                print(f"⛔ Usuario {user_id} alcanzó el límite mientras publicaba. Deteniendo la publicación.")
-                break
-            
-            media_rows = run_query(f"""
-                SELECT file_url FROM collected_media
-                WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}'
-            """, fetchall=True)
-            media_urls = [row[0] for row in media_rows] if media_rows else []
+    remaining_today = MAX_DAILY_POSTS - posted_today
+    remaining_window = min(MAX_WINDOW_POSTS - posted_in_window, remaining_today)
+    if remaining_window <= 0:
+        print(f"⛔ Usuario {user_id} sin cupo disponible en esta franja.")
+        return
 
-            extraction_filter = get_extraction_filter(user_id)
-            if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
-                print(f"❌ No se publico el tweet.")
-            else:
-                response, status_code = post_tweet(user_id, tweet_text, media_urls=media_urls)
+    last_post_row = run_query(
+        f"""
+        SELECT MAX(created_at)
+        FROM posted_tweets
+        WHERE user_id = '{user_id}'
+          AND created_at >= (date_trunc('day', NOW()) + (floor(extract(hour from NOW())/6) * interval '6 hours'))
+        """,
+        fetchone=True,
+    )
+    last_post_dt = last_post_row[0] if last_post_row and last_post_row[0] else None
 
-                if status_code == 200:
-                    insert_query = f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ('{user_id}', '{tweet_text}', NOW())"
-                    run_query(insert_query)
+    seconds_remaining = max(1.0, (window_end - now_utc).total_seconds())
+    ideal_spacing = max(30.0, seconds_remaining / float(max(1, remaining_window)))
+    jitter = random.uniform(0.6, 1.4)
 
-                    print(f"✅ Tweet publicado y guardado en posted_tweets: {tweet_text[:50]}...")
+    if last_post_dt is not None:
+        if last_post_dt.tzinfo is None:
+            last_post_dt = last_post_dt.replace(tzinfo=timezone.utc)
+        elapsed = (now_utc - last_post_dt).total_seconds()
+        if elapsed < ideal_spacing * jitter:
+            print(f"⏳ Espaciando publicaciones para user {user_id}: elapsed={elapsed:.0f}s < target={(ideal_spacing * jitter):.0f}s")
+            return
 
-                    delete_query = f"DELETE FROM collected_tweets WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
-                    run_query(delete_query)
-                    delete_query2 = f"DELETE FROM collected_media WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
-                    run_query(delete_query2)
+    # Elegir 1 tweet al azar de los primeros 50
+    tweet_id, tweet_text = random.choice(tweets_to_post)
 
-                    print(f"🗑️ Tweet eliminado de collected_tweets después de ser publicado: {tweet_text[:50]}...")
+    media_rows = run_query(
+        f"""
+        SELECT file_url FROM collected_media
+        WHERE user_id = '{user_id}' AND tweet_id = '{tweet_id}'
+        """,
+        fetchall=True,
+    )
+    media_urls = [row[0] for row in media_rows] if media_rows else []
 
-                    tweets_posted_last_hour += 1 
+    extraction_filter = get_extraction_filter(user_id)
+    if extraction_filter in ["cb2", "cb3", "cb4"] and "https://" not in tweet_text:
+        print(f"❌ No se publicó el tweet por falta de media/link para filtros cb2/cb3/cb4.")
+        return
 
-                else:
-                    print(f"❌ No se pudo publicar el tweet: {response.get('error')}")
+    response, status_code = post_tweet(user_id, tweet_text, media_urls=media_urls)
+    if status_code == 200:
+        insert_query = f"INSERT INTO posted_tweets (user_id, tweet_text, created_at) VALUES ('{user_id}', '{tweet_text}', NOW())"
+        run_query(insert_query)
 
-            await asyncio.sleep(0.1)
+        print(f"✅ Tweet publicado y guardado en posted_tweets: {tweet_text[:50]}...")
+
+        delete_query = f"DELETE FROM collected_tweets WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
+        run_query(delete_query)
+        delete_query2 = f"DELETE FROM collected_media WHERE tweet_id = '{tweet_id}' AND user_id = '{user_id}'"
+        run_query(delete_query2)
+
+        print(f"🗑️ Tweet eliminado de collected_tweets después de ser publicado: {tweet_text[:50]}...")
+    else:
+        print(f"❌ No se pudo publicar el tweet: {response.get('error')}")
+
+    await asyncio.sleep(random.uniform(0.2, 0.8))
 
     print(f"✅ Publicación de tweets completada para usuario ID: {user_id}.")
 
