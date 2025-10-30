@@ -13,6 +13,7 @@ from multiprocessing import Manager
 import time
 import os
 from services.db_service import log_event
+import traceback
 from utils.logs import now_hhmm
 
 app = Flask(__name__)
@@ -29,6 +30,15 @@ old_fetcher_thread = None
 poster_thread = None
 user_process_threads = {}
 user_process_events = {}
+
+# Debug helper
+DEBUG_ENABLED = os.getenv("DEBUG_TBOT", "1") == "1"
+def dbg(message: str):
+    if DEBUG_ENABLED:
+        try:
+            print(f"[DBG {time.strftime('%H:%M:%S')}] {message}")
+        except Exception:
+            print(f"[DBG] {message}")
 
 app.register_blueprint(accounts_bp, url_prefix="/api")
 app.register_blueprint(auth_bp, url_prefix="/auth")
@@ -121,6 +131,7 @@ def start_tweet_service():
     Starts the continuous tweet collection and posting service
     """
     print('🚀 Starting continuous tweet service...')
+    dbg(f"Thread starting service: daemon loop will run. fetching_event.is_set()={fetching_event.is_set()}")
 
     async def service_loop():
         last_fetch_ts = 0.0
@@ -130,6 +141,7 @@ def start_tweet_service():
                 try:
                     do_fetch = (last_fetch_ts == 0.0) or ((time.time() - last_fetch_ts) >= 6 * 60 * 60)
                     do_random = (last_random_ts == 0.0) or ((time.time() - last_random_ts) >= 6 * 60 * 60)
+                    dbg(f"service_loop tick: do_fetch={do_fetch}, do_random={do_random}, last_fetch_ts={last_fetch_ts}, last_random_ts={last_random_ts}")
 
                     if do_fetch or do_random:
                         log_event(None, "BATCH", f"start at {now_hhmm()}")
@@ -137,16 +149,20 @@ def start_tweet_service():
                     # --- FETCH cada 6h ---
                     if do_fetch:
                         print("🔎 Starting fetch (6h window)...")
+                        dbg("creating fetch_tweets_for_all_users task…")
                         fetch_task = asyncio.create_task(fetch_tweets_for_all_users(fetching_event))
                         await fetch_task
+                        dbg("fetch_tweets_for_all_users task done")
                         if fetching_event.is_set():
                             break
                         last_fetch_ts = time.time()
                         print("✅ Fetch complete.")
 
                     # --- POST continuo (reparte dentro de la franja) ---
+                    dbg("creating post_tweets_for_all_users task…")
                     post_task = asyncio.create_task(post_tweets_for_all_users(fetching_event))
                     await post_task
+                    dbg("post_tweets_for_all_users task done")
                     if fetching_event.is_set():
                         break
                     print("✅ Posting cycle complete.")
@@ -154,8 +170,10 @@ def start_tweet_service():
                     # --- RANDOM ACTIONS cada 6h ---
                     if do_random:
                         print("🎲 Starting random actions (6h window)...")
+                        dbg("creating fetch_random_tasks_for_all_users task…")
                         random_task = asyncio.create_task(fetch_random_tasks_for_all_users(fetching_event))
                         await random_task
+                        dbg("fetch_random_tasks_for_all_users task done")
                         if fetching_event.is_set():
                             break
                         last_random_ts = time.time()
@@ -176,15 +194,25 @@ def start_tweet_service():
                     break
                 except Exception as e:
                     print(f"❌ Error in service_loop: {e}")
+                    try:
+                        dbg(traceback.format_exc())
+                    except Exception:
+                        pass
                     log_event(None, "BATCH", f"end at {now_hhmm()}")
                     break
 
         print("⏹️ Continuous service stopped.")
     
+    # Run the async service loop in this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(service_loop())
+    loop.close()
     
 @app.route("/start-fetch", methods=["POST"])
 def start_fetch():
     global fetcher_thread
+    dbg("/start-fetch called")
     for user_id, thread in user_process_threads.items():
         if thread.is_alive():
             print(f"⏹️ Deteniendo proceso individual de usuario {user_id} por inicio de proceso global.")
@@ -193,16 +221,19 @@ def start_fetch():
 
     if fetcher_thread is None or not fetcher_thread.is_alive():
         fetching_event.clear() 
-        fetcher_thread = threading.Thread(target=start_tweet_service, daemon=True)
+        fetcher_thread = threading.Thread(target=start_tweet_service, daemon=True, name="tweet-service")
         fetcher_thread.start() 
+        dbg(f"fetcher_thread started: ident={fetcher_thread.ident}, alive={fetcher_thread.is_alive()}")
         return jsonify({"status": "started"}), 200
     else:
+        dbg("/start-fetch ignored: already running")
         return jsonify({"status": "already running"}), 400
 
 
 @app.route("/stop-fetch", methods=["POST"])
 def stop_fetch():
     global fetcher_thread
+    dbg("/stop-fetch called")
 
     if fetcher_thread is not None and fetcher_thread.is_alive():
         print("⏹️ Solicitando detener la recolección de tweets...")
@@ -213,17 +244,22 @@ def stop_fetch():
         if fetcher_thread.is_alive():
             print("⚠️ El hilo sigue activo, forzando su cierre...")
             fetcher_thread = None  
+        else:
+            dbg("fetcher_thread joined and stopped successfully")
 
         return jsonify({"status": "stopped"}), 200
     else:
+        dbg("/stop-fetch ignored: not running")
         return jsonify({"status": "not running"}), 400
 
 
 @app.route("/status-fetch", methods=["GET"])
 def status_fetch():
     global fetcher_thread
+    alive = fetcher_thread is not None and fetcher_thread.is_alive()
+    dbg(f"/status-fetch: alive={alive}, ident={(fetcher_thread.ident if fetcher_thread else None)}, event_set={fetching_event.is_set()}")
 
-    if fetcher_thread is not None and fetcher_thread.is_alive():
+    if alive:
         return jsonify({"status": "running"}), 200
     else:
         return jsonify({"status": "stopped"}), 200
