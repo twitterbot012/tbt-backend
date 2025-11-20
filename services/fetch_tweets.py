@@ -13,20 +13,43 @@ from google.oauth2 import service_account
 import json
 from time import monotonic
 import random
+from weakref import WeakKeyDictionary
+from asyncio import AbstractEventLoop
 
 SOCIALDATA_API_URL = "https://api.socialdata.tools/twitter/search"
 TWEET_LIMIT_PER_HOUR = 50
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-_TWAPI_LOCK = asyncio.Lock()
-_TWAPI_LAST_CALL = 0.0
+# Per-event-loop rate-limit state to avoid cross-loop Lock errors
+_TWAPI_LOCK_BY_LOOP: "WeakKeyDictionary[AbstractEventLoop, asyncio.Lock]" = WeakKeyDictionary()
+_TWAPI_LAST_CALL_BY_LOOP: "WeakKeyDictionary[AbstractEventLoop, float]" = WeakKeyDictionary()
+_TWAPI_429_STREAK_BY_LOOP: "WeakKeyDictionary[AbstractEventLoop, int]" = WeakKeyDictionary()
 _TWAPI_INTERVAL = 2.2   # más margen por Cloudflare
-_TWAPI_429_STREAK = 0
 _TWAPI_429_STREAK_FOR_COOLDOWN = 2
 _TWAPI_COOLDOWN_429 = 60
 _TWAPI_JITTER_MIN = 0.05
 _TWAPI_JITTER_MAX = 0.25
 TWITTERAPI_URL = "https://api.twitterapi.io/twitter/tweet/advanced_search"
+
+def _get_running_loop() -> AbstractEventLoop:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        # Fallback for contexts without a running loop yet
+        return asyncio.get_event_loop()
+
+def _get_twapi_rate_state():
+    """
+    Returns the loop-specific lock and ensures counters exist for that loop.
+    """
+    loop = _get_running_loop()
+    lock = _TWAPI_LOCK_BY_LOOP.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _TWAPI_LOCK_BY_LOOP[loop] = lock
+        _TWAPI_LAST_CALL_BY_LOOP[loop] = 0.0
+        _TWAPI_429_STREAK_BY_LOOP[loop] = 0
+    return loop, lock
 
 
 def _retry_after_seconds(headers) -> int | None:
@@ -37,10 +60,11 @@ def _retry_after_seconds(headers) -> int | None:
         return None
 
 async def _twapi_one_request(session, headers, params, timeout=60):
-    global _TWAPI_LAST_CALL
-    async with _TWAPI_LOCK:
+    loop, lock = _get_twapi_rate_state()
+    async with lock:
         now = monotonic()
-        wait = _TWAPI_INTERVAL - (now - _TWAPI_LAST_CALL)
+        last_call = _TWAPI_LAST_CALL_BY_LOOP.get(loop, 0.0)
+        wait = _TWAPI_INTERVAL - (now - last_call)
         if wait > 0:
             await asyncio.sleep(wait)
         # jitter leve para no caer en bordes de ventana
@@ -54,20 +78,21 @@ async def _twapi_one_request(session, headers, params, timeout=60):
             except Exception:
                 payload = None
 
-        _TWAPI_LAST_CALL = monotonic()
+        _TWAPI_LAST_CALL_BY_LOOP[loop] = monotonic()
     return status, hdrs, payload
 
 async def twapi_request(session, headers, params, timeout=60, max_retries=6):
     """Rate limit global, Retry-After, backoff exponencial con cooldown por racha."""
-    global _TWAPI_429_STREAK
+    loop, _ = _get_twapi_rate_state()
     attempt = 0
     while True:
         status, hdrs, payload = await _twapi_one_request(session, headers, params, timeout=timeout)
         if status != 429:
-            _TWAPI_429_STREAK = 0
+            _TWAPI_429_STREAK_BY_LOOP[loop] = 0
             return status, hdrs, payload
 
-        _TWAPI_429_STREAK += 1
+        current_streak = _TWAPI_429_STREAK_BY_LOOP.get(loop, 0) + 1
+        _TWAPI_429_STREAK_BY_LOOP[loop] = current_streak
 
         ra = _retry_after_seconds(hdrs)
         if ra and ra > 0:
@@ -79,10 +104,10 @@ async def twapi_request(session, headers, params, timeout=60, max_retries=6):
             print(f"⏳ 429, backoff try {attempt+1}, sleep {sleep_s:.1f}s")
             await asyncio.sleep(sleep_s)
 
-        if _TWAPI_429_STREAK >= _TWAPI_429_STREAK_FOR_COOLDOWN:
+        if _TWAPI_429_STREAK_BY_LOOP.get(loop, 0) >= _TWAPI_429_STREAK_FOR_COOLDOWN:
             print(f"🧊 Cooldown global por racha de 429, {_TWAPI_COOLDOWN_429}s")
             await asyncio.sleep(_TWAPI_COOLDOWN_429)
-            _TWAPI_429_STREAK = 0
+            _TWAPI_429_STREAK_BY_LOOP[loop] = 0
 
         attempt += 1
         if attempt > max_retries:
